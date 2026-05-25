@@ -6,30 +6,33 @@
 
 ## Problem Statement
 
-A patient with a mobility-affecting condition (e.g. a developing limp) uses an
-ordinary walking stick or wheeled walker. Their clinician has no objective, continuous
-picture of how the patient's gait is changing between appointments — they rely on
-infrequent in-clinic observation and the patient's own recall. Subtle deterioration
-(or improvement from rehab) goes unmeasured until it is severe. The patient, in turn,
-has no way to know when a change in their walking is significant enough to be worth
-contacting their clinician.
+A user with a mobility-affecting condition (e.g. a developing limp) uses an
+ordinary walking stick or wheeled walker. They have no objective, continuous picture
+of how their own gait is changing day to day; subtle deterioration (or improvement
+from rehab) goes unnoticed until it is severe, and recall between any clinic visits is
+unreliable. The user has no easy way to build **awareness** of when their walking has
+changed enough that it might be worth mentioning to a doctor.
 
 ## Solution
 
-**Moon Walk** is a sensor box that clips onto the patient's existing **Host Aid** and
-turns it into an instrument. It continuously measures the patient's **Gait** —
+**Moon Walk** is a sensor box that clips onto the user's existing **Host Aid** and
+turns it into an instrument. It continuously measures the user's **Gait** —
 cadence, duty factor, loading, asymmetry, and stride/velocity trends — learns that
-individual patient's normal **Baseline** on-device, and detects sustained **Drift**
+individual user's normal **Baseline** on-device, and detects sustained **Drift**
 from it. When gait drifts meaningfully, the companion app raises a non-medical
-**Alert** nudging the patient to consider contacting their clinician. The patient can
-export a trend report to share. Data and intelligence stay on the device and the
-patient's phone; nothing goes to the cloud by default.
+**Alert** — a wellness awareness cue (e.g. "your walking has changed — you may want to
+mention it to your doctor"), shown inline with the MEDICAL CLAIM SAFETY disclaimer.
+The user may *optionally* export a trend report to share with a doctor. Data and
+intelligence stay on the device and the user's phone; nothing goes to the cloud by
+default.
 
-Moon Walk **measures and trends**; it does not diagnose, predict disease, or give
-medical advice (see ADR-0001). A clinician interprets the data.
+Moon Walk is a **consumer-wellness self-monitoring** tool first (see ADR-0005). It
+**measures and trends** for the user's own awareness; it does **not** diagnose, treat,
+predict disease, or predict fall risk (see ADR-0001). Sharing with a doctor is
+optional, and a clinician — never the device — interprets any data.
 
 **Moon Walk is also a Speaking Stick** (ADR-0003). On a **Look Gesture** (raise/point
-the stick) or button press, it captures the patient's surroundings with a camera,
+the stick) or button press, it captures the user's surroundings with a camera,
 sends the frame to a cloud **VLM** (Gemini 2.5 Flash) for an open-ended **Scene
 Description**, and speaks it aloud — "there's a doorway about two metres ahead on your
 left, and a chair directly in front of you." A separate, fully-offline **Proximity
@@ -44,27 +47,27 @@ intelligence. They are linked by a wired UART.
 
 ## User Stories
 
-### Patient — setup & calibration
-1. As a patient, I want to clip Moon Walk onto my own walking stick or walker, so that I don't have to buy or learn a new mobility aid.
-2. As a patient, I want to tell Moon Walk whether I use a cane or a walker, so that it measures my gait with the correct model (see ADR-0002).
-3. As a patient, I want a short guided calibration (e.g. enter/confirm my stick length, do a brief walk), so that my stride and loading measurements are tuned to me.
-4. As a patient, I want Moon Walk to calibrate my personal grip-force thresholds, so that my loading metrics are accurate despite person-to-person variation.
-5. As a patient, I want Moon Walk to pair with my phone over Bluetooth, so that I can see my data without any internet account.
+### User — setup & calibration
+1. As a user, I want to clip Moon Walk onto my own walking stick or walker, so that I don't have to buy or learn a new mobility aid.
+2. As a user, I want to tell Moon Walk whether I use a cane or a walker, so that it measures my gait with the correct model (see ADR-0002).
+3. As a user, I want a short guided calibration (e.g. enter/confirm my stick length, do a brief walk), so that my stride and loading measurements are tuned to me.
+4. As a user, I want Moon Walk to calibrate my personal grip-force thresholds, so that my loading metrics are accurate despite person-to-person variation.
+5. As a user, I want Moon Walk to pair with my phone over Bluetooth, so that I can see my data without any internet account.
 
-### Patient — daily use
-6. As a patient, I want Moon Walk to record my walking automatically whenever I use my aid, so that I don't have to start/stop anything.
-7. As a patient, I want the device to be unobtrusive and battery-powered, so that it doesn't interfere with how I walk.
-8. As a patient, I want to see my recent walking activity in the app, so that I feel informed about my own progress.
-9. As a patient, I want to receive an Alert when my walking has changed noticeably, phrased as a suggestion to contact my clinician (not a diagnosis), so that I act at the right time without being alarmed.
-10. As a patient, I want to understand that Alerts are not medical advice, so that I have correct expectations of the device.
-11. As a patient, I want to export a trend report and share it with my clinician, so that they can see objective data between visits.
-12. As a patient, I want my data to stay on my device and phone by default, so that my health information is private.
+### User — daily use
+6. As a user, I want Moon Walk to record my walking automatically whenever I use my aid, so that I don't have to start/stop anything.
+7. As a user, I want the device to be unobtrusive and battery-powered, so that it doesn't interfere with how I walk.
+8. As a user, I want to see my recent walking activity in the app, so that I feel informed about my own progress.
+9. As a user, I want to receive an Alert when my walking has changed noticeably, phrased as a wellness awareness cue ("you may want to mention it to your doctor"), not a diagnosis, so that I notice change without being alarmed.
+10. As a user, I want every Alert to carry an inline MEDICAL CLAIM SAFETY disclaimer ("a wellness awareness cue, not a medical assessment"), and a persistent disclaimer footer on the dashboard, so that I never mistake awareness for diagnosis (see ADR-0005).
+11. As a user, I want to *optionally* export a trend report to share with my doctor, so that they can see objective data if I choose to involve them.
+12. As a user, I want my data to stay on my device and phone by default, so that my health information is private.
 
-### Clinician
-13. As a clinician, I want to receive a patient-shared trend report of gait metrics over time, so that I can assess progression or improvement objectively.
+### Clinician (optional — only if the User chooses to share)
+13. As a clinician, I want to receive a user-shared trend report of gait metrics over time, so that I can assess progression or improvement objectively.
 14. As a clinician, I want temporal metrics (cadence, duty factor, asymmetry) presented as the primary, reliable figures, so that I trust the numbers I act on.
 15. As a clinician, I want spatial metrics (stride length, velocity) clearly labelled as relative trends, not absolutes, so that I am not misled by known underestimation.
-16. As a clinician, I want to see how current metrics compare to the patient's own Baseline, so that I judge change for that individual rather than against a population norm.
+16. As a clinician, I want to see how current metrics compare to the user's own Baseline, so that I judge change for that individual rather than against a population norm.
 
 ### Cane Mode (single swinging stick)
 17. As a cane user, I want Moon Walk to detect each Stick Cycle (plant and swing), so that my cadence and rhythm are measured.
@@ -79,18 +82,18 @@ intelligence. They are linked by a wired UART.
 24. As a walker user, I want cadence and duty factor derived from my gait, so that timing changes are tracked even though the walker rolls continuously.
 
 ### Speaking Stick — see & speak (see ADR-0003, ADR-0004)
-28. As a patient, I want to raise or point my stick (a **Look Gesture**) to ask "what's in front of me?", so that I get a spoken description hands-free without pressing anything.
-29. As a patient, I want a button as a manual trigger for a scene description, so that I have a reliable fallback if the gesture isn't detected.
-30. As a patient, I want Moon Walk to speak a natural description of my surroundings (obstacles, doorways, people), so that I get a useful, human-sounding picture rather than a list of object labels.
-31. As a patient, I want an instant buzz/haptic when something is close ahead (the **Proximity Alert**), so that I am warned immediately even when there is no network.
-32. As a patient, I want the see-and-speak feature to keep working acceptably if the cloud is slow or unreachable, so that a bad connection doesn't leave me with nothing (offline Proximity Alert + a canned fallback phrase).
-33. As a patient, I want to understand that the spoken descriptions are an assistive convenience and not a safety guarantee, so that I keep using my own judgement and attention.
-34. As a patient, I want to know that camera frames for descriptions go to a cloud service (unlike my gait/health data, which stays on-device), so that I can make an informed privacy choice.
+28. As a user, I want to raise or point my stick (a **Look Gesture**) to ask "what's in front of me?", so that I get a spoken description hands-free without pressing anything.
+29. As a user, I want a button as a manual trigger for a scene description, so that I have a reliable fallback if the gesture isn't detected.
+30. As a user, I want Moon Walk to speak a natural description of my surroundings (obstacles, doorways, people), so that I get a useful, human-sounding picture rather than a list of object labels.
+31. As a user, I want an instant buzz/haptic when something is close ahead (the **Proximity Alert**), so that I am warned immediately even when there is no network.
+32. As a user, I want the see-and-speak feature to keep working acceptably if the cloud is slow or unreachable, so that a bad connection doesn't leave me with nothing (offline Proximity Alert + a canned fallback phrase).
+33. As a user, I want to understand that the spoken descriptions are an assistive convenience and not a safety guarantee, so that I keep using my own judgement and attention.
+34. As a user, I want to know that camera frames for descriptions go to a cloud service (unlike my gait/health data, which stays on-device), so that I can make an informed privacy choice.
 
 ### Intelligence & validation
-25. As a patient, I want Moon Walk to learn my normal Baseline over repeated sessions, so that Alerts reflect my own normal, not a generic standard.
-26. As a patient, I want only *sustained* Drift to raise an Alert, so that I am not alerted by a single odd walk or a cold-weather stiff day.
-27. As a developer, I want to validate the Drift detection with a simulated-impairment protocol (record a normal Baseline, then walk with a deliberately induced limp and confirm the Alert fires), so that the intelligence is demonstrable without weeks of real patient data.
+25. As a user, I want Moon Walk to learn my normal Baseline over repeated sessions, so that Alerts reflect my own normal, not a generic standard.
+26. As a user, I want only *sustained* Drift to raise an Alert, so that I am not alerted by a single odd walk or a cold-weather stiff day.
+27. As a developer, I want to validate the Drift detection with a simulated-impairment protocol (record a normal Baseline, then walk with a deliberately induced limp and confirm the Alert fires), so that the intelligence is demonstrable without weeks of real user data.
 
 ## Implementation Decisions
 
@@ -109,8 +112,8 @@ intelligence. They are linked by a wired UART.
   rejected BLE/I2C). A small message protocol carries sensor events, gait metrics, and
   trigger signals.
 - **Data flow:**
-  - *Gait/health*: on-device + the Patient's phone over local BLE; **no cloud for
-    health data**; Patient explicitly exports a report to a Clinician.
+  - *Gait/health*: on-device + the User's phone over local BLE; **no cloud for
+    health data**; User explicitly exports a report to a Clinician.
   - *See-and-speak*: camera frames → **cloud VLM** over Wi-Fi (scoped exception,
     ADR-0003). The Proximity Alert is fully offline.
 
@@ -128,16 +131,17 @@ intelligence. They are linked by a wired UART.
    wheel-encoder odometry (Walker Mode); output: stride length and velocity. Pure;
    the mode is an input, not a global.
 5. **Baseline & Drift Model** *(deep, Linux)* — input: metric history; maintains the
-   per-patient **Baseline**, computes a **Drift** score, and decides when to raise an
-   **Alert**. Pure logic over a time series (e.g. per-patient statistical baseline +
+   per-user **Baseline**, computes a **Drift** score, and decides when to raise an
+   **Alert**. Pure logic over a time series (e.g. per-user statistical baseline +
    z-score/threshold on sustained departure).
 6. **UART Bridge** — thin glue over the wired serial link; a small message protocol
    carries sensor events, gait metrics, and trigger signals Nano→UNO Q (ADR-0004).
 7. **History Store** — on-device persistence of sessions and metrics.
-8. **Companion App + BLE** — phone UI: activity view, Alerts (with non-medical
-   framing), trend report export. Implements the BLE GATT layer itself (not provided
-   by UNO Q docs — to be built with BlueZ/`bleak` on the Linux side).
-9. **Calibration & Mode Setup** — stick-length entry, per-patient FSR threshold
+8. **Companion App + BLE** — phone UI: activity view, Alerts (wellness awareness
+   framing + inline MEDICAL CLAIM SAFETY disclaimer, ADR-0005), persistent dashboard
+   disclaimer footer, optional trend report export. Implements the BLE GATT layer
+   itself (not provided by UNO Q docs — to be built with BlueZ/`bleak` on the Linux side).
+9. **Calibration & Mode Setup** — stick-length entry, per-user FSR threshold
    calibration, Host Aid mode selection (manual at setup).
 10. **Look Gesture + Proximity Detector (Nano)** *(deep)* — input: IMU + ToF sample
     stream; output: a debounced **Look Gesture** trigger and a thresholded **Proximity
@@ -149,6 +153,11 @@ intelligence. They are linked by a wired UART.
     offline object-detection + offline TTS Bricks are the no-network fallback (ADR-0003).
 
 ### Key technical decisions
+- **Wellness positioning + enforced claim-safety vocabulary** (ADR-0005). The person
+  is a **User**, not a "Patient"; copy uses awareness/guidance language (cue, reminder,
+  self-monitoring) and never says diagnosis, treatment, or **fall risk**. The MEDICAL
+  CLAIM SAFETY disclaimer is inline on every Alert + a persistent dashboard footer,
+  and is distinct from the Speaking Stick's assistive-safety disclosure.
 - **Scope: measure-and-trend, not diagnostic** (ADR-0001). Spatial metrics are
   relative trends only (Werner et al. 2019: ~25–42% absolute error, but ICC ≈
   0.72–0.76 for tracking change); temporal metrics are the headline figures (ICC
@@ -159,7 +168,7 @@ intelligence. They are linked by a wired UART.
 - **Two multi-channel sensors:** the IMU (6-axis) and the multi-FSR grip. Thermo
   (temp/humidity) was dropped as not gait-relevant.
 - **Mode selection is manual at setup** (reliable); auto-detection is out of scope.
-- **Per-patient calibration is mandatory** (FSR inter-subject variability).
+- **Per-user calibration is mandatory** (FSR inter-subject variability).
 - **See-and-speak is a cloud VLM, not on-device** (ADR-0003): open-ended Scene
   Description quality is the demo "wow" and only a cloud VLM (Gemini 2.5 Flash)
   delivers it. On-device object detection + offline TTS are the no-network fallback.
@@ -201,9 +210,12 @@ fixtures, shared between the validation protocol and the test suite.
 pure-logic modules + fixture-driven known-answer tests.
 
 ## Out of Scope
-- Diagnosis, disease prediction, or any medical advice (ADR-0001).
+- Diagnosis, treatment, disease prediction, **fall-risk prediction**, or any medical
+  advice (ADR-0001, ADR-0005). Moon Walk is wellness, not medicine.
+- Stress / emotional-state inference — Moon Walk senses gait and handle load only;
+  "stress detection" is not a Moon Walk capability (ADR-0005).
 - Cloud sync/accounts for **gait/health data**, and a live clinician dashboard (gait
-  data is patient-exported only). Note: the see-and-speak layer *does* use a cloud VLM
+  data is user-exported only, and only if the User chooses). Note: the see-and-speak layer *does* use a cloud VLM
   for camera frames — a scoped, disclosed exception (ADR-0003), not health-data sync.
 - Automatic Host Aid mode detection (manual selection at setup instead).
 - Camera-based optical-flow **odometry** (deferred; Walker Mode uses a wheel encoder).
