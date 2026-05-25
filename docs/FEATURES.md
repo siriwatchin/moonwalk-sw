@@ -9,6 +9,11 @@ This document is the canonical reference for **what Moon Walk measures, what it
 does not, and why**. It exists to prevent the recurring expectation gap: Moon
 Walk instruments the **stick**, not the leg, and it has **no force plate**.
 
+Moon Walk is a **consumer-wellness self-monitoring** product (ADR-0005). Everything
+below is framed as awareness and guidance for the **User** — never diagnosis,
+treatment, or fall-risk prediction. See the Claim Safety language discipline in
+[`CONTEXT.md`](../CONTEXT.md).
+
 ---
 
 ## 1. Feature List
@@ -19,14 +24,14 @@ Walk instruments the **stick**, not the leg, and it has **no force plate**.
 | Automatic recording | Records walking whenever the Host Aid is used — no start/stop | US-6 |
 | Cane Mode sensing | Stick Cycle detection (plant/swing), cadence, rhythm variability | US-17, 21 |
 | Pendulum-model distance | Stride length + velocity, ZUPT-anchored to bound drift | US-18, 20 |
-| Handle Load measurement | How hard the patient leans on the stick (offload signal) | US-19 |
+| Handle Load measurement | How hard the user leans on the stick (offload signal) | US-19 |
 | Walker Mode sensing | Wheel-encoder odometry for distance/velocity | US-22 |
 | Dual-grip asymmetry | Left-vs-right grip-load asymmetry → direct limp signal | US-23 |
 | Temporal metrics | Cadence, Stick Duty Factor, asymmetry — headline reliable figures | US-14, 24 |
 | Spatial trend metrics | Stride/velocity as relative trends only (labelled, not absolutes) | US-15 |
-| Baseline learning | Learns the individual patient's normal, on-device | US-25 |
-| Drift detection + Alert | Non-medical Alert only on **sustained** Drift | US-9, 26 |
-| Non-medical framing | Alerts phrased as "consider contacting your clinician" | US-9, 10 |
+| Baseline learning | Learns the individual user's normal, on-device | US-25 |
+| Drift detection + Alert | Non-medical wellness Alert only on **sustained** Drift | US-9, 26 |
+| Wellness claim-safety framing | Alerts phrased as awareness cues ("you may want to mention it to your doctor"); inline MEDICAL CLAIM SAFETY disclaimer on every Alert + persistent dashboard footer; never diagnosis/treatment/fall-risk | US-9, 10 |
 
 ### 1.2 Speaking Stick (secondary — the demo headline)
 | Feature | Description | PRD ref |
@@ -42,13 +47,13 @@ Walk instruments the **stick**, not the leg, and it has **no force plate**.
 | Feature | Description | PRD ref |
 |---|---|---|
 | Clip-on form factor | Attaches to existing stick/walker; battery-powered, unobtrusive | US-1, 7 |
-| Mode selection | Patient sets cane vs walker at setup (manual; auto-detect out of scope) | US-2 |
+| Mode selection | User sets cane vs walker at setup (manual; auto-detect out of scope) | US-2 |
 | Guided calibration | Stick-length entry + brief walk to tune stride/loading | US-3 |
-| Per-patient grip calibration | Calibrates personal FSR thresholds (mandatory) | US-4 |
+| Per-user grip calibration | Calibrates personal FSR thresholds (mandatory) | US-4 |
 | BLE phone pairing | Pairs over Bluetooth, no internet account | US-5 |
-| Activity view (app) | Patient sees recent walking activity | US-8 |
-| Trend report export | Patient exports a report to share with clinician | US-11, 13 |
-| Baseline comparison view | Clinician sees current vs the patient's own Baseline | US-16 |
+| Activity view (app) | User sees recent walking activity | US-8 |
+| Trend report export | User *optionally* exports a report to share with a doctor | US-11, 13 |
+| Baseline comparison view | If shared, a clinician sees current vs the user's own Baseline | US-16 |
 | On-device privacy posture | Gait/health data on device + phone; only camera frames go to cloud | US-12, 34 |
 
 ---
@@ -60,7 +65,7 @@ a **ToF distance** sensor, and — in Walker Mode — a **wheel encoder**. Every
 below derives from those. The organising principle:
 
 > **Moon Walk gives you timing (trustworthy), distance/speed trends (directional),
-> and relative lean/loading (per-patient) — built from a stick, about the stick.
+> and relative lean/loading (per-user) — built from a stick, about the stick.
 > It does not give ground forces or leg-segment kinetics.**
 
 ### Tier 1 — Reliable headline metrics (temporal) · ICC 0.72–0.97
@@ -85,14 +90,14 @@ Real and useful, but **never presented as clinical absolutes** — change-over-t
 | Gait velocity | stride length × cadence | Trend only |
 | Distance walked | Accumulated stride / encoder | Trend only |
 
-### Tier 3 — Loading metrics (relative, per-patient) · NOT Newtons or %BW
+### Tier 3 — Loading metrics (relative, per-user) · NOT Newtons or %BW
 Closest Moon Walk gets to force data — but this is **handle force, not ground
 reaction force** (CONTEXT.md:55–61).
 
 | Metric | Source | Honest framing |
 |---|---|---|
-| Handle Load (relative) | Multi-FSR grip | "How hard the patient leans on the stick" |
-| Peak handle load per cycle | FSR peak | Relative units, per-patient baseline |
+| Handle Load (relative) | Multi-FSR grip | "How hard the user leans on the stick" |
+| Peak handle load per cycle | FSR peak | Relative units, per-user baseline |
 | Grip-pressure distribution | Multi-point FSR | Grip asymmetry indicator |
 | L/R load asymmetry (Walker) | Dual-grip FSRs | Direct uneven-loading signal |
 
@@ -104,12 +109,21 @@ Documented so the boundary is explicit. The following are **not deliverable** wi
 the current architecture and contradict ADR-0001 (measure-and-trend) and ADR-0004
 (stick-mounted, two-board):
 
+**Claim-wise (ADR-0005 — wellness, not medicine):**
+- **Diagnosis, treatment, or medical decisions** — Moon Walk surfaces awareness; a
+  human (the User, optionally a doctor) interprets.
+- **Fall-risk prediction / "likely to fall"** — the tempting walking-aid overclaim;
+  explicitly banned.
+- **Stress / emotional-state inference** — Moon Walk senses gait and handle load
+  only; it has no affect-sensing capability.
+
+**Physically out of reach (no force plate):**
 - **True leg stance time** — Moon Walk knows when the *handle* is loaded, not when a
   *foot* is on the ground (CONTEXT.md:53).
 - **Ground reaction forces** of any axis (vertical / anterior-posterior /
   medial-lateral) — requires a force plate or pressure insoles.
-- **Forces in Newtons** — FSRs are relative/per-patient, not lab-calibrated.
-- **Forces in %body-weight** — the device never knows the patient's body weight.
+- **Forces in Newtons** — FSRs are relative/per-user, not lab-calibrated.
+- **Forces in %body-weight** — the device never knows the user's body weight.
 - **Braking / propulsion phases & their forces** — require the A-P GRF axis.
 - **Impulses (Ns), impact/active peaks, times-to-peak, force-derived velocity
   changes** — all force-plate curve features.
