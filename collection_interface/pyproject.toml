@@ -1,0 +1,17 @@
+[project]
+name = "moonwalk-collection-interface"
+version = "0.1.0"
+description = "External Streamlit data collection and visualization interface for Moon Walk hardware streams."
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "plotly>=5.24",
+    "pyserial>=3.5",
+    "streamlit>=1.38",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
