@@ -1,0 +1,26 @@
+# Cane and walker use different sensing models, not one shared model
+
+Moon Walk supports two **Host Aid** types via two distinct sensing models, selected
+per setup — not a single model with a configuration toggle.
+
+- **Cane Mode** (single swinging stick): distance/stride from the **Pendulum Model**
+  (gyroscope rotation × stick length), with **Handle Load** (FSR) detecting each
+  stick-plant to apply a zero-velocity reset (ZUPT) that bounds integration drift.
+- **Walker Mode** (wheeled rollator): the pendulum is invalid (it rolls, doesn't
+  swing), so distance comes from **wheel-encoder odometry** (literature ~0.15% error,
+  robust indoors). Limp is measured directly as **left-vs-right grip-load asymmetry**
+  from dual grips — an asymmetry signal a single cane physically cannot provide.
+
+**Why.** The two host types obey different physics. A cane is a pendulum pivoting
+about its tip; a rollator is a rolling vehicle pushed with two continuously-loaded
+hands. Forcing both through one model would make at least one wrong. Each mode uses
+the sensing that fits its mechanics — and each has a *different* strength (the cane's
+pendulum geometry; the walker's direct left/right asymmetry).
+
+**Considered and rejected.** A single shared model with a "mode" flag — rejected
+because no common model yields valid distance for both. Supporting only one host type
+— rejected because target patients use both.
+
+**Consequences.** ~2× the integration and validation work, and Walker Mode needs
+hardware (wheel encoder, dual-grip FSRs) the cane build does not. Accepted
+deliberately.
