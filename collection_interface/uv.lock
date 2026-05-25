@@ -394,6 +394,7 @@ dependencies = [
     { name = "plotly" },
     { name = "pyserial" },
     { name = "streamlit" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -402,6 +403,7 @@ requires-dist = [
     { name = "plotly", specifier = ">=5.24" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "streamlit", specifier = ">=1.38" },
+    { name = "websockets", specifier = ">=16.0" },
 ]
 
 [[package]]

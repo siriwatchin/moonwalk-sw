@@ -1,8 +1,9 @@
 # Moon Walk Collection Interface
 
 External Streamlit collector for the `hardware` motion stream. It reads
-`MWALK_MOTION_RAW` and `MWALK_MOTION_SAMPLE` protocol lines, reuses the hardware
-motion parser/classifier, and keeps the UI outside the firmware/bridge module.
+`MWALK_MOTION_RAW` and `MWALK_MOTION_SAMPLE` protocol lines from WebSocket,
+serial, pasted text, or uploaded files. It reuses the hardware motion
+parser/classifier and keeps the UI outside the firmware/bridge module.
 
 ## Run
 
@@ -26,10 +27,23 @@ uv run python -m unittest discover -s tests
 
 ## Inputs
 
+- Live WebSocket messages from a local or forwarded endpoint.
 - Live serial lines from the Arduino serial monitor or bridge output.
 - Pasted protocol lines.
 - Uploaded `.jsonl`, `.log`, `.txt`, or `.csv` files.
 - Demo samples for UI checks without hardware.
+
+## WebSocket Collection
+
+The WebSocket endpoint should send text or UTF-8 bytes containing one protocol
+line per message:
+
+```text
+MWALK_MOTION_RAW {"protocol":"cane-posture.motion.v1","kind":"raw","ax_g":0.0,"ay_g":0.0,"az_g":1.0,"roll_dps":0.0,"pitch_dps":0.0,"yaw_dps":0.0}
+```
+
+Run the app, enter a URL such as `ws://127.0.0.1:8765`, click **Connect
+WebSocket**, then enable **Collect WebSocket**.
 
 ## Outputs
 

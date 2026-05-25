@@ -108,6 +108,7 @@ uv run streamlit run src/collection_interface/app.py
 The interface supports:
 
 - live serial collection from the Arduino stream;
+- live WebSocket collection from a local or forwarded stream;
 - pasted `MWALK_MOTION_RAW` or `MWALK_MOTION_SAMPLE` lines;
 - uploaded `.jsonl`, `.log`, `.txt`, or `.csv` files;
 - demo sample generation when hardware is unavailable;

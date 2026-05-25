@@ -24,6 +24,7 @@ from collection_interface.utils import (
     summarize_samples,
     trim_samples,
 )
+from collection_interface.websocket_io import WebSocketReadConfig, open_websocket, read_available_messages
 
 
 APP_TITLE = "Moon Walk Collection Interface"
@@ -36,6 +37,9 @@ def init_state() -> None:
     st.session_state.setdefault("serial_connection", None)
     st.session_state.setdefault("serial_port", "")
     st.session_state.setdefault("collect_live", False)
+    st.session_state.setdefault("websocket_connection", None)
+    st.session_state.setdefault("websocket_url", "")
+    st.session_state.setdefault("collect_websocket", False)
 
 
 def close_serial() -> None:
@@ -47,6 +51,17 @@ def close_serial() -> None:
             pass
     st.session_state.serial_connection = None
     st.session_state.collect_live = False
+
+
+def close_websocket() -> None:
+    connection = st.session_state.get("websocket_connection")
+    if connection is not None:
+        try:
+            connection.close()
+        except Exception:
+            pass
+    st.session_state.websocket_connection = None
+    st.session_state.collect_websocket = False
 
 
 def append_errors(errors: list[str]) -> None:
@@ -74,10 +89,48 @@ def render_sidebar() -> tuple[str, str, str]:
         st.sidebar.success("Updated current samples")
 
     st.sidebar.divider()
+    st.sidebar.header("Live WebSocket")
+    websocket_url = st.sidebar.text_input("WebSocket URL", value=st.session_state.websocket_url or "ws://127.0.0.1:8765")
+    websocket_messages = st.sidebar.slider("Messages per refresh", min_value=1, max_value=250, value=60)
+    websocket_timeout_s = st.sidebar.slider("Message timeout seconds", min_value=0.01, max_value=1.0, value=0.05, step=0.01)
+
+    ws_col_a, ws_col_b = st.sidebar.columns(2)
+    with ws_col_a:
+        if st.button("Connect WebSocket", use_container_width=True):
+            close_websocket()
+            try:
+                st.session_state.websocket_connection = open_websocket(websocket_url.strip())
+                st.session_state.websocket_url = websocket_url.strip()
+                st.sidebar.success(f"Connected to {websocket_url.strip()}")
+            except Exception as error:
+                append_errors([str(error)])
+                st.sidebar.error(str(error))
+    with ws_col_b:
+        if st.button("Disconnect WebSocket", use_container_width=True):
+            close_websocket()
+
+    websocket_connected = st.session_state.websocket_connection is not None
+    st.session_state.collect_websocket = st.sidebar.toggle(
+        "Collect WebSocket",
+        value=st.session_state.collect_websocket and websocket_connected,
+        disabled=not websocket_connected,
+    )
+
+    if st.session_state.collect_websocket:
+        result = read_available_messages(
+            st.session_state.websocket_connection,
+            config=WebSocketReadConfig(max_messages=websocket_messages, timeout_s=websocket_timeout_s),
+        )
+        append_samples(apply_metadata(result.samples, label=label, note=note))
+        append_errors(result.errors)
+        time.sleep(websocket_timeout_s)
+        st.rerun()
+
+    st.sidebar.divider()
     st.sidebar.header("Live Serial")
     ports = list_serial_ports()
     port_labels = [f"{port.device} - {port.description}" for port in ports]
-    selected = st.sidebar.selectbox("Port", port_labels or ["COM3 - manual entry fallback"])
+    selected = st.sidebar.selectbox("Port", port_labels or ["COM6 - manual entry fallback"])
     port = selected.split(" - ", 1)[0]
     manual_port = st.sidebar.text_input("Manual port override", value="" if ports else port)
     if manual_port.strip():
@@ -160,7 +213,7 @@ def render_summary(samples) -> None:
 
 def render_visuals(samples) -> None:
     if not samples:
-        st.info("Connect serial, import a log, or add demo samples to begin.")
+        st.info("Connect WebSocket or serial, import a log, or add demo samples to begin.")
         return
 
     max_points = st.slider("Visualization point limit", min_value=200, max_value=10000, value=2500, step=100)
@@ -210,7 +263,7 @@ def render_visuals(samples) -> None:
 
 def render_errors() -> None:
     if st.session_state.errors:
-        with st.expander("Recent parse or serial errors", expanded=False):
+        with st.expander("Recent parse or connection errors", expanded=False):
             for error in st.session_state.errors[-12:]:
                 st.warning(error)
 
