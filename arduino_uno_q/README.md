@@ -1,4 +1,4 @@
-# uno_q_imu_webui — UNO Q IMU dashboard (Arduino App Lab WebUI Brick)
+# arduino_uno_q — UNO Q IMU dashboard (Arduino App Lab WebUI Brick)
 
 The UNO Q side of the Smart Cane prototype, built as an **Arduino App Lab app** using two
 official bricks: the **TimeSeriesStore Brick** (`arduino.app_bricks.dbstorage_tsstore`)
@@ -70,7 +70,7 @@ Real-time: `web_ui.send_message("imu_sample", sample_dict)` → browser `socket.
 The dev extras (`tests/`, `pyproject.toml`) were dropped to match the App Lab layout, so
 sanity-check with the standard library only:
 ```bash
-cd uno_q_imu_webui
+cd arduino_uno_q
 python -m py_compile python/*.py
 cd python && python -c "import config, models, parser, store, ts_store, webui_server, mock_source, ble_receiver, main"
 ```
@@ -99,5 +99,4 @@ only be exercised on the UNO Q.
 Nano firmware, Supabase upload, Kalman filter, velocity/distance estimation.
 `SampleStore` / the TimeSeriesStore are the seams for future analytics / Supabase.
 
-> An earlier plain-Python/Flask variant lives in `../uno_q/`; this app supersedes it
-> with the official WebUI Brick as the single server (no fallback).
+> The Nano 33 BLE sender firmware lives in the sibling `../arduino/` folder.
