@@ -15,12 +15,29 @@ off-device will fail by design (run it on the UNO Q / in App Lab).
 from __future__ import annotations
 
 import argparse
+import os
 import threading
 
-from config import BUFFER_MAXLEN, UI_PORT
+from config import BUFFER_MAXLEN, DEFAULT_MODE, UI_PORT
 from models import SensorSource
 from parser import parse_line
 from store import SampleStore
+
+
+def resolve_mode(cli_mode: str | None) -> tuple[str, str]:
+    """Pick the data source: --mode arg > MODE env var > config.DEFAULT_MODE.
+
+    Returns (mode, origin) where origin is 'cli' | 'env' | 'default' for logging.
+    """
+    if cli_mode:
+        mode, origin = cli_mode, "cli"
+    elif os.getenv("MODE"):
+        mode, origin = os.environ["MODE"], "env"
+    else:
+        mode, origin = DEFAULT_MODE, "default"
+    if mode not in ("mock", "ble"):
+        raise SystemExit(f"invalid mode {mode!r} (use mock|ble)")
+    return mode, origin
 
 _logged: set[str] = set()
 
@@ -60,13 +77,15 @@ def run_source(source: SensorSource, store: SampleStore, tsstore) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="UNO Q IMU WebUI gateway")
-    ap.add_argument("--mode", choices=["mock", "ble"], default="mock")
+    ap.add_argument("--mode", choices=["mock", "ble"], default=None,
+                    help="data source; overrides MODE env var / config.DEFAULT_MODE")
     ap.add_argument("--buffer", type=int, default=BUFFER_MAXLEN)
     args = ap.parse_args()
 
+    mode, origin = resolve_mode(args.mode)
     store = SampleStore(maxlen=args.buffer)
-    store.set_mode(args.mode)
-    source = build_source(args.mode)
+    store.set_mode(mode)
+    source = build_source(mode)
     store.set_status(source.status())
 
     # TimeSeriesStore Brick: persist every sample. (Imports the Arduino SDK.)
@@ -83,7 +102,7 @@ def main() -> None:
     worker = threading.Thread(target=run_source, args=(source, store, tsstore), daemon=True)
     worker.start()
 
-    print(f"UNO Q IMU dashboard starting (mode={args.mode}, port={UI_PORT})")
+    print(f"UNO Q IMU dashboard starting (mode={mode} [{origin}], port={UI_PORT})")
     from arduino.app_utils import App
     try:
         App.run()         # starts all bricks (WebUI + TimeSeriesStore) and blocks

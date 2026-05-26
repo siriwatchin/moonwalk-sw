@@ -24,6 +24,11 @@ PHASE_LABELS = {
     3: "SWING_OR_ON_AIR",
 }
 
+# ---- Source selection ---------------------------------------------------
+# Which data source to use when no --mode arg / MODE env var is given.
+# Edit to "ble" on the UNO Q to default to receiving the real Nano over BLE.
+DEFAULT_MODE = "mock"   # "mock" | "ble"
+
 # ---- Store / UI ---------------------------------------------------------
 BUFFER_MAXLEN = 600     # ~30 s of history at 20 Hz
 RECENT_POINTS = 200     # samples returned to the browser for charts

@@ -54,10 +54,25 @@ tools/tailwind/                          # dev-only: rebuild assets/tailwind.css
    `sketch/` + `app.yaml` — **don't overwrite the board's `sketch/`**; ours is a placeholder).
 2. In the **Bricks** panel add both bricks: **Web UI** and **Database – Time Series**
    (installs them + updates `app.yaml`). App Lab then runs `python/main.py`.
-   - Mock first: `--mode mock` (default, runs with no args).
-   - BLE: `--mode ble` (needs `bleak`: `pip install bleak` on the device).
-3. Open **`http://<uno-q-ip>:7000/`**. Badge shows `mock` / `connected`; numbers,
-   phase label, and charts update live.
+3. Open **`http://<uno-q-ip>:7000/`**. Badge shows the source + status; numbers,
+   phase label, and the 3 charts update live.
+
+## Choosing the source (mock vs BLE)
+The data source is resolved at startup with this precedence:
+**`--mode` arg → `MODE` env var → `config.DEFAULT_MODE`**. App Lab runs `main.py` with no
+args, so on the board pick one of:
+- **Edit `python/config.py`**: `DEFAULT_MODE = "ble"` (surest — re-sync + Run), or
+- set env **`MODE=ble`** if your App Lab run lets you set environment variables.
+Switching source = change the setting and **re-run** (no live toggle by design).
+The startup log prints e.g. `mode=ble [default]` so you can confirm which was chosen.
+
+### BLE bring-up checklist (mode = ble)
+- `pip install bleak` on the UNO Q (mock mode doesn't need it; if missing, the badge
+  shows `error: No module named 'bleak'`).
+- Bluetooth up on the UNO Q (BlueZ powered on) and the **Nano flashed + advertising
+  `NanoIMU`** (see `../arduino/BRINGUP.md`). Only **one** BLE central at a time.
+- Expected badge flow: `ble · scanning` → `ble · connected` (green/live); moving the Nano
+  changes the values + charts. `ble · NanoIMU not found` means it can't see the Nano.
 
 ### REST API (exposed via `expose_api`, served under `/api/...`)
 | Method | Path           | Returns |
