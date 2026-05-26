@@ -55,6 +55,22 @@ const PINS = [
 const GARDEN_MAX = 4;                // 5 stages 0..4 (dirt → sprout → young → flowering → ripe)
 const GARDEN_NAMES = ['planted','sprouting','growing','flowering','ripe with berries'];
 
+// ---- buddy presentation: big, camera-followed, expressive (user request) ----
+const BUDDY_H = 44;                  // sprite height in world px (~native 64 res, kept detailed)
+const CAM_ZOOM = 1.9;                // per-card camera zoom so the face reads while it roams
+
+// Per-mood POSTURE: Pokémon front sprites have ONE face, so mood is told through body language —
+// slump/lift, breathing amplitude/speed, squash-stretch, tilt, roam pace, hop height, and the
+// emote bubble. Hop height also scales with the live `swing` metric; a low `rhythm` adds a gentle
+// unsteady wobble. (Claim-safe: this expresses the User's own movement, never a health rating.)
+const POSE = {
+  asleep:   {amp:0.7, freq:1.0, squashY:0.88, lift:3,  tilt:0, roam:null,   hopH:0,  emote:null},
+  sad:      {amp:1.1, freq:1.5, squashY:0.96, lift:1,  tilt:4, roam:'slow', hopH:3,  emote:'question'},
+  okay:     {amp:1.4, freq:2.1, squashY:1.00, lift:0,  tilt:0, roam:'med',  hopH:6,  emote:null},
+  happy:    {amp:1.8, freq:2.7, squashY:1.00, lift:0,  tilt:0, roam:'fast', hopH:10, emote:'happy', excite:true},
+  thrilled: {amp:2.2, freq:3.5, squashY:1.00, lift:0,  tilt:0, roam:'fast', hopH:14, emote:'happy', excite:true, big:true},
+};
+
 // ---- per-walker progression state (persisted) ----
 const prog = {};                     // id -> progression object
 const card = {};                     // id -> DOM refs
@@ -96,7 +112,11 @@ class Arena extends Phaser.Scene {
     this.load.json('lmap', ASSETS + 'littleroot-map.json');
     this.load.spritesheet('mtiles', ASSETS + 'metatiles.png', {frameWidth:MT, frameHeight:MT});
     this.load.spritesheet('garden', ASSETS + 'garden.png', {frameWidth:MT, frameHeight:MT*2});
-    POKEMON.forEach(p => this.load.image('poke-'+p.id, ASSETS + 'pokemon/'+p.id+'.png'));
+    // 2-frame idle-bob sheets (the buddy's own in-art breathing) + static fallback
+    POKEMON.forEach(p => {
+      this.load.spritesheet('anim-'+p.id, ASSETS + 'pokemon_anim/'+p.id+'.png', {frameWidth:64, frameHeight:64});
+      this.load.image('poke-'+p.id, ASSETS + 'pokemon/'+p.id+'.png');
+    });
     ['happy','question','shock'].forEach(e => this.load.image('emote-'+e, ASSETS + 'emotes/'+e+'.png'));
   }
 
@@ -125,22 +145,37 @@ class Arena extends Phaser.Scene {
     // spawn the buddy on a walkable tile (deterministic offset per card)
     const s = this.spawns[(this.seed*7) % this.spawns.length] || {c:Math.floor(this.W/2), r:Math.floor(this.H/2)};
     const cont = this.add.container(s.c*MT + MT/2, s.r*MT + MT).setDepth(20 + s.r);
-    const sprite = this.add.image(0, 0, 'poke-' + walkers[this.id].poke).setOrigin(0.5, 1);
-    sprite.displayHeight = 34; sprite.scaleX = Math.abs(sprite.scaleY);
+    const sprite = this.add.sprite(0, 0, 'anim-' + walkers[this.id].poke).setOrigin(0.5, 1);
+    sprite.displayHeight = BUDDY_H; sprite.scaleX = Math.abs(sprite.scaleY);
     this._base = sprite.scaleY;
-    const shadow = this.add.ellipse(0, 1, sprite.displayWidth*0.55, 6, 0x103810, 0.4);
-    const emote  = this.add.image(0, -sprite.displayHeight - 5, 'emote-happy').setVisible(false).setScale(1);
-    const zzz    = this.add.text(sprite.displayWidth*0.45, -sprite.displayHeight, 'z',
-                     {fontFamily:'monospace', fontSize:'13px', color:'#ffffff',
-                      fontStyle:'bold', stroke:'#103810', strokeThickness:2}).setVisible(false);
-    const sparkA = this.add.text(-12, -22, '✨', {fontSize:'13px'}).setOrigin(0.5).setVisible(false);
-    const sparkB = this.add.text( 12, -12, '✨', {fontSize:'13px'}).setOrigin(0.5).setVisible(false);
+    sprite.play(this.buildIdle(walkers[this.id].poke));
+    const shadow = this.add.ellipse(0, 1, sprite.displayWidth*0.5, 7, 0x103810, 0.4);
+    const emote  = this.add.image(0, -BUDDY_H - 6, 'emote-happy').setVisible(false).setScale(1.2);
+    const zzz    = this.add.text(BUDDY_H*0.32, -BUDDY_H, 'z',
+                     {fontFamily:'monospace', fontSize:'15px', color:'#ffffff',
+                      fontStyle:'bold', stroke:'#103810', strokeThickness:3}).setVisible(false);
+    const sparkA = this.add.text(-BUDDY_H*0.4, -BUDDY_H*0.6, '✨', {fontSize:'15px'}).setOrigin(0.5).setVisible(false);
+    const sparkB = this.add.text( BUDDY_H*0.4, -BUDDY_H*0.35, '✨', {fontSize:'15px'}).setOrigin(0.5).setVisible(false);
     cont.add([shadow, sprite, emote, zzz, sparkA, sparkB]);
+
+    // big & readable: zoom in and let the camera follow the buddy as it roams the town
+    const cam = this.cameras.main;
+    cam.setZoom(CAM_ZOOM);
+    cam.startFollow(cont, true, 0.08, 0.08);
 
     this.buddy = {cont, sprite, shadow, emote, zzz, sparkA, sparkB,
                   c:s.c, r:s.r, poke:walkers[this.id].poke, moving:false,
-                  nextStepAt:0, bob:0, moodKey:null, excitedAt:0, sleepShown:false};
+                  nextStepAt:0, bob:0, moodKey:null, excitedAt:0, sleepShown:false, busyUntil:0};
     arenaScene[this.id] = this;
+  }
+
+  // build (once per species) the 2-frame idle-bob animation and return its key
+  buildIdle(poke){
+    const key = 'idle-' + poke;
+    if (!this.anims.exists(key))
+      this.anims.create({key, frames:this.anims.generateFrameNumbers('anim-'+poke, {start:0, end:1}),
+                         frameRate:1.6, repeat:-1});
+    return key;
   }
 
   findPlantTile(){
@@ -163,10 +198,12 @@ class Arena extends Phaser.Scene {
 
   bounce(big){
     const s = this.buddy.sprite, base = this._base;
-    this.tweens.add({targets:s, y:-(big?20:9), duration:big?280:170, yoyo:true, ease:'Quad.easeOut',
+    this.buddy.busyUntil = this.time.now + (big ? 600 : 360);   // pause per-frame posture so it doesn't fight
+    this.tweens.add({targets:s, y:-(big?22:10), duration:big?300:180, yoyo:true, ease:'Quad.easeOut',
                      onComplete:()=>{ s.y = 0; }});
-    this.tweens.add({targets:s, scaleY:base*(big?1.25:1.12), scaleX:base*(big?0.82:0.9),
-                     duration:big?140:90, yoyo:true, ease:'Sine.easeInOut'});
+    this.tweens.add({targets:s, scaleY:base*(big?1.28:1.13), scaleX:base*(big?0.8:0.9),
+                     duration:big?150:95, yoyo:true, ease:'Sine.easeInOut',
+                     onComplete:()=>{ s.scaleY = base; s.scaleX = Math.abs(base); }});
   }
 
   // celebratory flourish for a level-up (no failure framing — pure celebration)
@@ -190,16 +227,20 @@ class Arena extends Phaser.Scene {
 
   update(time, delta){
     const b = this.buddy, w = walkers[this.id], p = prog[this.id]; if (!b || !w || !p) return;
-    if (b.poke !== w.poke){
-      b.sprite.setTexture('poke-' + w.poke);
-      b.sprite.displayHeight = 34; b.sprite.scaleX = Math.abs(b.sprite.scaleY); this._base = b.sprite.scaleY;
-      b.poke = w.poke;
+    if (b.poke !== w.poke){                              // user swapped buddy in the picker
+      b.sprite.setTexture('anim-' + w.poke);
+      b.sprite.displayHeight = BUDDY_H; b.sprite.scaleX = Math.abs(b.sprite.scaleY); this._base = b.sprite.scaleY;
+      b.sprite.play(this.buildIdle(w.poke)); b.poke = w.poke;
     }
 
     // wake-your-buddy gate: until the first walk of the day, the buddy sleeps regardless of score
     const asleep = !p.wokeToday;
-    const mood = asleep ? MOODS[0] : moodFor(w._score), cad = w.cadence||0;
+    const mood = asleep ? MOODS[0] : moodFor(w._score);
+    const cad = w.cadence||0, parts = w._parts||{};
+    const swing = parts.swing||0, rhythm = parts.rhythm||0;
+    const pose = POSE[mood.key] || POSE.okay;
 
+    // emote bubble / sleep z's / sparkles follow the mood
     if (b.moodKey !== mood.key || (asleep && !b.sleepShown)){
       b.moodKey = mood.key;
       if (asleep){
@@ -207,34 +248,50 @@ class Arena extends Phaser.Scene {
         b.sparkA.setVisible(false); b.sparkB.setVisible(false); b.sleepShown = true;
       } else {
         b.zzz.setVisible(false);
-        if (mood.emote){ b.emote.setTexture('emote-'+mood.emote).setVisible(true); } else b.emote.setVisible(false);
+        if (pose.emote){ b.emote.setTexture('emote-'+pose.emote).setVisible(true); } else b.emote.setVisible(false);
         const thr = mood.key==='thrilled';
         b.sparkA.setVisible(thr); b.sparkB.setVisible(thr);
       }
     }
 
-    // gentle breathing bob; sparkle twinkle
-    b.bob += delta/1000 * (asleep ? 1.0 : 2.0 + cad/30);
-    if (!b.moving) b.sprite.y = -Math.abs(Math.sin(b.bob)) * (asleep ? 0.7 : 1.4);
+    // idle in-art breathing speeds up with how lively the walking is
+    if (b.sprite.anims) b.sprite.anims.timeScale = asleep ? 0.5 : 1 + cad/45;
+
+    // ---- continuous POSTURE (body language tells the mood; one face, many bodies) ----
+    if (!b.moving && time > b.busyUntil){
+      b.bob += delta/1000 * pose.freq * (asleep ? 1 : 0.8 + cad/60);
+      const base = this._base, s = b.sin = Math.abs(Math.sin(b.bob));
+      b.sprite.y = pose.lift - s * pose.amp;                          // breathing / slump lift
+      const stretch = asleep ? 0 : s * 0.06;                          // lively buddies stretch up on the bob
+      b.sprite.scaleY = base * (pose.squashY + stretch);
+      b.sprite.scaleX = Math.abs(base) * (asleep ? 1.05 : 1 - stretch*0.5);
+      const wobble = asleep ? 0 : (1 - rhythm/100) * 2.4;             // low rhythm → gentle unsteady sway
+      b.sprite.setRotation(Phaser.Math.DegToRad(pose.tilt + Math.sin(b.bob*0.7)*wobble));
+    }
     if (b.sparkA.visible){ b.sparkA.alpha = .5+.5*Math.sin(b.bob*1.7); b.sparkB.alpha = .5+.5*Math.sin(b.bob*1.7+2); }
-    if (!asleep && (mood.key==='happy'||mood.key==='thrilled') && time>b.excitedAt && !b.moving){
-      this.bounce(false); b.excitedAt = time + Phaser.Math.Between(1500, 3000);
+
+    // happy/thrilled buddies do excited little jumps in place
+    if (!asleep && pose.excite && time>b.excitedAt && !b.moving && time>b.busyUntil){
+      this.bounce(!!pose.big);
+      b.excitedAt = time + Phaser.Math.Between(pose.big?700:1400, pose.big?1600:2900);
     }
 
-    if (asleep || mood.key==='asleep') return;           // naps in place
-    if (!b.moving && time>b.nextStepAt){
+    if (asleep || !pose.roam) return;                    // naps / rests in place
+    if (!b.moving && time>b.nextStepAt && time>b.busyUntil){
       const step = this.pickStep();
       if (step){
         b.moving = true;
         if (step.dc!==0){ b.sprite.setFlipX(step.dc<0); }
-        const dur = Math.max(220, (({sad:640,okay:480,happy:360,thrilled:280})[mood.key]||480) - cad*1.4);
-        const hop = ({sad:4,okay:6,happy:9,thrilled:12})[mood.key]||6;
+        b.sprite.setRotation(0);
+        const speedK = ({slow:1.4, med:1.0, fast:0.7})[pose.roam] || 1.0;
+        const dur = Math.max(220, 480*speedK - cad*1.4);
+        const hop = pose.hopH * (0.6 + swing/100*0.8);   // free, swinging strides → higher hops
         b.c = step.nc; b.r = step.nr; b.cont.setDepth(20 + b.r);
         this.tweens.add({targets:b.cont, x:b.c*MT+MT/2, y:b.r*MT+MT, duration:dur, ease:'Sine.easeInOut',
                          onComplete:()=>{ b.moving=false; }});
         this.tweens.add({targets:b.sprite, y:-hop, duration:dur/2, yoyo:true, ease:'Quad.easeOut',
                          onComplete:()=>{ b.sprite.y=0; }});
-        const rest = ({sad:[2000,3400],okay:[1000,2000],happy:[500,1100],thrilled:[250,600]})[mood.key]||[1000,2000];
+        const rest = ({slow:[1800,3200], med:[900,1900], fast:[400,1100]})[pose.roam] || [900,1900];
         b.nextStepAt = time + dur + Phaser.Math.Between(rest[0],rest[1])*(1-Math.min(.5,cad/120));
       } else b.nextStepAt = time + 700;
     }

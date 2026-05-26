@@ -195,9 +195,13 @@ def recolour_indexed(src_png, pal, dst, transparent0=True):
 
 
 os.makedirs(f"{OUT}/pokemon", exist_ok=True)
+os.makedirs(f"{OUT}/pokemon_anim", exist_ok=True)
 for sp in SPECIES:
     pal = read_pal(f"{PE}/graphics/pokemon/{sp}/normal.pal")
     recolour_indexed(f"{PE}/graphics/pokemon/{sp}/front.png", pal, f"{OUT}/pokemon/{sp}.png")
+    # anim_front.png is 64x128 = 2 vertical idle-bob frames; recolour the whole sheet so the
+    # consumer can play a 2-frame breathing animation (the buddy's own in-art liveliness).
+    recolour_indexed(f"{PE}/graphics/pokemon/{sp}/anim_front.png", pal, f"{OUT}/pokemon_anim/{sp}.png")
 
 # ---------------------------------------------------------------- emotes
 # The field-effect emotes have no companion .pal (runtime paletteNum). Their embedded

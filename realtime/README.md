@@ -124,6 +124,11 @@ gamification MVP the three persona studies converged on. Open `game/emerald.html
 
 - **Full-colour Littleroot Town** — each card renders the real 20×20 Emerald town against a
   true-colour metatile atlas; buddies are colour front sprites (Pikachu is actually yellow).
+- **Big, expressive buddy** — the camera zooms in and **follows the buddy** as it roams, so its face
+  is readable. Pokémon sprites have one face, so mood is told through **body language**: a slumped,
+  drooping sleeper (💤) → low sway when sleepy → gentle bob warming up → bouncy hops when happy → big
+  jumps + sparkles when thrilled. The 2-frame `anim_front` idle bob plays underneath (speed tracks
+  cadence); hop height scales with the live **swing** metric and a low **rhythm** adds an unsteady sway.
 - **Wake your buddy** — overnight the buddy sleeps (💤); the first walk of a new calendar day wakes
   it, adds a **walk-day**, and ripens the **berry garden** one stage (5 stages, planted→ripe; it
   **never wilts** on a missed day).
