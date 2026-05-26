@@ -1,0 +1,14 @@
+[project]
+name = "gait-pipeline"
+version = "0.1.0"
+description = "Phase 2: mock Nano IMU receiver/processing pipeline for the smart-cane gait prototype"
+requires-python = ">=3.10"
+dependencies = []                # core pipeline is pure standard library
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.9"]       # only needed for `--plot`
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]               # make `src` importable from the project root
+testpaths = ["tests"]

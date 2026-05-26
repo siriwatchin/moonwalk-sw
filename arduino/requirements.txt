@@ -1,0 +1,4 @@
+# UNO Q Linux-side receivers/bridge dependencies.
+#   pip install -r requirements.txt
+bleak
+websockets

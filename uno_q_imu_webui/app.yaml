@@ -1,0 +1,6 @@
+name: UNO_Q_IMU_Dashboard
+description: "Receives NanoIMU BLE data and visualizes IMU + walking phase on a Web UI."
+icon: 🦯
+bricks:
+  - arduino:web_ui: {}
+  - arduino:dbstorage_tsstore: {}

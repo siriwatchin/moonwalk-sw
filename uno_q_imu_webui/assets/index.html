@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smart Cane — UNO Q IMU</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>🦯 Smart Cane — UNO Q</h1>
+    <span id="badge">connecting…</span>
+    <span class="meta" id="meta"></span>
+    <span class="spacer"></span>
+    <button id="btnClear">Clear</button>
+    <button id="btnExport">Export CSV</button>
+  </header>
+
+  <div class="wrap">
+    <div class="card">
+      <h2>Phase</h2>
+      <div id="phase" class="phase p0">—</div>
+      <div class="meta">
+        acc_norm <span class="big" id="accN">—</span>
+        &nbsp;&nbsp; gyro_norm <span class="big" id="gyroN">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Accelerometer (m/s²)</h2>
+      <div class="vals">
+        <span>ax</span><span id="ax">—</span>
+        <span>ay</span><span id="ay">—</span>
+        <span>az</span><span id="az">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Gyroscope (deg/s)</h2>
+      <div class="vals">
+        <span>gx</span><span id="gx">—</span>
+        <span>gy</span><span id="gy">—</span>
+        <span>gz</span><span id="gz">—</span>
+      </div>
+    </div>
+
+    <div class="card full"><h2>acc_norm</h2><canvas id="cAcc"></canvas></div>
+    <div class="card full"><h2>gyro_norm</h2><canvas id="cGyro"></canvas></div>
+  </div>
+
+  <!-- Socket.IO client served by the WebUI brick's socket layer. If your build
+       doesn't serve it here, vendor it to assets/libs/socket.io.min.js and point
+       this src there (see README). app.js degrades to REST polling if absent. -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
