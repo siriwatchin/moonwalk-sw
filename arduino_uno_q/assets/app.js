@@ -1,26 +1,18 @@
 "use strict";
 
+// Dashboard reads everything via the WebUI brick's REST API (no Socket.IO).
+// Endpoints are registered on the brick under /api/...; the page polls them.
+
 const PHASE_NAMES = {
   0: "UNKNOWN", 1: "STATIONARY / ZERO-VEL",
   2: "GROUND CONTACT + ROTATION", 3: "SWING / ON-AIR",
 };
-const MAXPTS = 200;
-const acc = [], gyro = [];   // client-side ring buffers for the charts
+const PHASE_BG = { 0: "bg-phase0", 1: "bg-phase1", 2: "bg-phase2", 3: "bg-phase3" };
+const PHASE_BASE = "inline-block mt-1 px-3.5 py-1.5 rounded-lg font-bold text-[15px] ";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v, d = 3) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
-
-// REST helper: WebUI brick serves these under /api/...; also try the bare path
-// in case a given build doesn't prefix them.
-async function apiFetch(path, opts) {
-  for (const url of [`/api${path}`, path]) {
-    try {
-      const r = await fetch(url, opts);
-      if (r.ok) return r;
-    } catch (_) { /* try next */ }
-  }
-  return null;
-}
+const api = (path, opts) => fetch(`/api${path}`, { cache: "no-store", ...(opts || {}) });
 
 function setBadge(text, cls) {
   const b = $("badge");
@@ -28,19 +20,41 @@ function setBadge(text, cls) {
   b.className = cls || "";
 }
 
-function handleSample(s) {
+function renderLatest(s) {
   if (!s) return;
   for (const k of ["ax", "ay", "az", "gx", "gy", "gz"]) $(k).textContent = fmt(s[k]);
   $("accN").textContent = fmt(s.acc_norm, 2);
   $("gyroN").textContent = fmt(s.gyro_norm, 2);
   const ph = $("phase");
   ph.textContent = PHASE_NAMES[s.phase] ?? "—";
-  ph.className = "phase p" + (s.phase ?? 0);
+  ph.className = PHASE_BASE + (PHASE_BG[s.phase] ?? PHASE_BG[0]);
+}
 
-  acc.push(s.acc_norm); if (acc.length > MAXPTS) acc.shift();
-  gyro.push(s.gyro_norm); if (gyro.length > MAXPTS) gyro.shift();
-  drawChart($("cAcc"), acc, "#58a6ff", 9.80665);
-  drawChart($("cGyro"), gyro, "#f0883e");
+// Step chart for the phase code (0..3) over time.
+function drawPhase(canvas, data) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  if (!data || data.length < 2) return;
+
+  const lo = -0.3, hi = 3.3;
+  const x = (i) => (i / (data.length - 1)) * w;
+  const y = (v) => h - ((v - lo) / (hi - lo)) * h;
+
+  ctx.strokeStyle = "#21262d"; ctx.lineWidth = 1;          // gridlines at 0..3
+  for (const lvl of [0, 1, 2, 3]) {
+    ctx.beginPath(); ctx.moveTo(0, y(lvl)); ctx.lineTo(w, y(lvl)); ctx.stroke();
+  }
+  ctx.strokeStyle = "#a371f7"; ctx.lineWidth = 2; ctx.beginPath();  // step line (post)
+  data.forEach((v, i) => {
+    const px = x(i);
+    if (i === 0) { ctx.moveTo(px, y(v)); return; }
+    ctx.lineTo(px, y(data[i - 1]));   // hold previous level
+    ctx.lineTo(px, y(v));             // step to new level
+  });
+  ctx.stroke();
 }
 
 // Minimal self-contained line chart on a canvas (no external libs).
@@ -68,64 +82,45 @@ function drawChart(canvas, data, color, baseline = null) {
   ctx.stroke();
 }
 
-async function refreshStatus() {
-  const r = await apiFetch("/status");
-  if (!r) { setBadge("server unreachable", "down"); return; }
-  const s = await r.json();
-  const live = s.live;
-  setBadge(`${s.mode || "?"} · ${s.source_status || ""}${live ? " · live" : ""}`,
-           (s.mode === "mock" || live) ? "live" : "down");
-  $("meta").textContent = `samples: ${s.count}`
-    + (s.tsstore ? ` · db:${s.tsstore}` : "")
-    + (s.age_s !== null ? ` · last ${s.age_s}s ago` : "");
+// Charts + latest numbers (server keeps the rolling buffer; we just render it).
+async function pollData() {
+  try {
+    const [series, latest] = await Promise.all([
+      api("/series").then((r) => r.json()),
+      api("/latest").then((r) => r.json()),
+    ]);
+    drawChart($("cAcc"), series.acc_norm, "#58a6ff", 9.80665);
+    drawChart($("cGyro"), series.gyro_norm, "#f0883e");
+    drawPhase($("cPhase"), series.phase);
+    renderLatest(latest.latest);
+  } catch (_) { /* transient — next tick retries */ }
 }
 
-async function backfill() {
-  // Seed the charts from /series (column arrays) ...
-  const rs = await apiFetch("/series");
-  if (rs) {
-    const s = await rs.json();
-    (s.acc_norm || []).forEach((v) => acc.push(v));
-    (s.gyro_norm || []).forEach((v) => gyro.push(v));
-    while (acc.length > MAXPTS) acc.shift();
-    while (gyro.length > MAXPTS) gyro.shift();
+async function pollStatus() {
+  try {
+    const s = await api("/status").then((r) => r.json());
+    setBadge(`${s.mode || "?"} · ${s.source_status || ""}${s.live ? " · live" : ""}`,
+             (s.mode === "mock" || s.live) ? "live" : "down");
+    $("meta").textContent = `samples: ${s.count}`
+      + (s.tsstore ? ` · db:${s.tsstore}` : "")
+      + (s.age_s != null ? ` · last ${s.age_s}s ago` : "");
+  } catch (_) {
+    setBadge("server unreachable", "down");
   }
-  // ... and the numeric panels from /latest.
-  const rl = await apiFetch("/latest");
-  if (rl) handleSample((await rl.json()).latest);
 }
 
-// --- real-time: Socket.IO push from the WebUI brick's send_message ---
-function startRealtime() {
-  if (typeof io === "function") {
-    const socket = io(`http://${window.location.host}`);
-    socket.on("imu_sample", handleSample);
-    return;
-  }
-  // The Socket.IO client script didn't load (check /socket.io/socket.io.js).
-  // Keep the page usable by polling the /latest REST endpoint.
-  console.warn("Socket.IO client not loaded; polling /latest instead");
-  setInterval(async () => {
-    const r = await apiFetch("/latest");
-    if (r) handleSample((await r.json()).latest);
-  }, 150);
-}
-
-$("btnClear").onclick = async () => {
-  await apiFetch("/clear", { method: "POST" });
-  acc.length = 0; gyro.length = 0;
-};
+$("btnClear").onclick = () => api("/clear", { method: "POST" });
 $("btnExport").onclick = async () => {
-  const r = await apiFetch("/export_csv");
-  if (!r) return;
-  const { filename, csv } = await r.json();
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = filename || "imu_samples.csv";
-  a.click();
+  try {
+    const { filename, csv } = await api("/export_csv").then((r) => r.json());
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = filename || "imu_samples.csv";
+    a.click();
+  } catch (_) { /* ignore */ }
 };
 
-backfill();
-startRealtime();
-refreshStatus();
-setInterval(refreshStatus, 1000);
+pollData();
+pollStatus();
+setInterval(pollData, 300);     // charts + latest values
+setInterval(pollStatus, 1000);  // connection / status badge

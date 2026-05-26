@@ -1,15 +1,14 @@
 """WebUI Brick server layer — the ONLY module that imports the Arduino WebUI brick.
 
-Wraps `arduino.app_bricks.web_ui.WebUI`:
-  - exposes the REST API via `ui.expose_api(method, path, handler)`
-  - pushes live samples to the browser via `ui.send_message("imu_sample", dict)`
+Wraps `arduino.app_bricks.web_ui.WebUI`: registers the dashboard REST API via
+`expose_api`. The browser polls these endpoints (no Socket.IO push).
 
-Verified usage (Arduino App Lab examples):
+Verified usage (working App Lab dashboards, e.g. philippe86220/uno-q-sensors-webui):
     from arduino.app_bricks.web_ui import WebUI
-    ui = WebUI()
-    ui.expose_api("GET", "/status", handler)         # handler returns a dict
-    ui.send_message("temperature", {...})            # real-time push (Socket.IO)
-    web_ui.start()                                    # serves static assets + /api/*
+    web = WebUI()
+    web.expose_api("GET", "/api/state", handler)   # full path incl. /api; handler(_req=None)->dict
+    # the app is started by arduino.app_utils.App.run() (which starts all bricks)
+Static files are served from the app's assets/ folder; UI is at port 7000.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from store import SampleStore
 
 
 class WebUIServer:
-    """Registers the dashboard REST API and pushes real-time IMU samples."""
+    """Registers the dashboard REST API on the WebUI brick."""
 
     def __init__(self, store: SampleStore):
         from arduino.app_bricks.web_ui import WebUI  # required — UNO Q / App Lab only
@@ -29,21 +28,13 @@ class WebUIServer:
 
     def _register_api(self) -> None:
         ui, store = self.ui, self.store
-        # Handlers return plain dicts; the brick serializes them as JSON under /api/...
-        ui.expose_api("GET", "/status", lambda: store.status())
-        ui.expose_api("GET", "/latest", lambda: {"latest": store.latest()})
-        # /series: recent values per metric for the charts (from the in-memory buffer).
-        ui.expose_api("GET", "/series", lambda: store.series())
-        ui.expose_api("POST", "/clear", lambda: {"cleared": True, "removed": store.clear()})
-        ui.expose_api("GET", "/export_csv", lambda: {
+        # Full paths incl. /api (the brick does NOT auto-prefix). Handlers accept an
+        # optional request arg and return a plain dict (serialized to JSON).
+        ui.expose_api("GET", "/api/status", lambda _req=None: store.status())
+        ui.expose_api("GET", "/api/latest", lambda _req=None: {"latest": store.latest()})
+        ui.expose_api("GET", "/api/series", lambda _req=None: store.series())
+        ui.expose_api("POST", "/api/clear", lambda _req=None: {"cleared": True, "removed": store.clear()})
+        ui.expose_api("GET", "/api/export_csv", lambda _req=None: {
             "filename": "imu_samples.csv",
             "csv": store.to_csv(),
         })
-
-    def push(self, sample) -> None:
-        """Push one new sample to all connected browser clients."""
-        self.ui.send_message("imu_sample", sample.to_dict())
-
-    def start(self) -> None:
-        """Start the WebUI brick: serve static assets + /api/* and block."""
-        self.ui.start()

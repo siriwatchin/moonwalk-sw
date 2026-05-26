@@ -4,7 +4,8 @@
     python main.py --mode ble      # receive a real NanoIMU over BLE
 
 Pipeline (identical for mock and BLE):
-    source.lines() -> parse_line -> SampleStore.append -> WebUI.send_message("imu_sample")
+    source.lines() -> parse_line -> TimeSeriesStore.write + SampleStore.append
+The browser polls the WebUI brick's /api/* endpoints (REST, no Socket.IO).
 
 This app runs on the Arduino App Lab **WebUI Brick** (+ TimeSeriesStore Brick) — there is
 no other server. Those bricks are provided by App Lab on the UNO Q; importing them
@@ -42,23 +43,19 @@ def build_source(mode: str) -> SensorSource:
     raise ValueError(f"unknown mode: {mode!r}")
 
 
-def run_source(source: SensorSource, store: SampleStore, tsstore, server) -> None:
-    """Consume raw lines forever: parse -> TimeSeriesStore + in-memory buffer -> push."""
+def run_source(source: SensorSource, store: SampleStore, tsstore) -> None:
+    """Consume raw lines forever: parse -> in-memory buffer + TimeSeriesStore."""
     for raw in source.lines():
         store.set_status(source.status())
         sample = parse_line(raw)
         if sample is None:
             continue
-        # In-memory buffer first, so the dashboard keeps working even if a brick errs.
+        # In-memory buffer first, so the dashboard keeps working even if the TS brick errs.
         store.append(sample)
         try:
             tsstore.write(sample)     # persist all 9 metrics to TimeSeriesStore
         except Exception as exc:
             _log_once("tsstore.write", exc)
-        try:
-            server.push(sample)       # real-time push to browser clients
-        except Exception as exc:
-            _log_once("webui.send_message", exc)
 
 
 def main() -> None:
@@ -77,17 +74,19 @@ def main() -> None:
     tsstore = TsStore()
     store.set_tsstore(True)
 
-    # WebUI Brick is the server. (Imports the Arduino SDK — UNO Q / App Lab only.)
+    # WebUI Brick: construct + register the /api/* routes. (Imports the Arduino SDK.)
+    # Keep a reference so the brick stays registered with the App framework.
     from webui_server import WebUIServer
-    server = WebUIServer(store)
+    _server = WebUIServer(store)  # noqa: F841 — must exist before App.run()
 
-    # Source runs in the background; web_ui.start() owns the main thread.
-    worker = threading.Thread(target=run_source, args=(source, store, tsstore, server), daemon=True)
+    # Source runs in the background; App.run() owns the main thread.
+    worker = threading.Thread(target=run_source, args=(source, store, tsstore), daemon=True)
     worker.start()
 
     print(f"UNO Q IMU dashboard starting (mode={args.mode}, port={UI_PORT})")
+    from arduino.app_utils import App
     try:
-        server.start()   # web_ui.start(): serves static assets + /api/* and blocks
+        App.run()         # starts all bricks (WebUI + TimeSeriesStore) and blocks
     finally:
         tsstore.stop()    # cleanly stop the TimeSeriesStore service on shutdown
 

@@ -4,8 +4,8 @@ The UNO Q side of the Smart Cane prototype, built as an **Arduino App Lab app** 
 official bricks: the **TimeSeriesStore Brick** (`arduino.app_bricks.dbstorage_tsstore`)
 for persistence and the **WebUI Brick** (`arduino.app_bricks.web_ui`) for the dashboard.
 It receives the `NanoIMU` BLE stream on the UNO Q's Linux side, parses it, **writes every
-sample to the time-series DB**, keeps a rolling in-memory buffer, exposes a REST API, and
-pushes live samples to the browser via `send_message` (Socket.IO).
+sample to the time-series DB**, keeps a rolling in-memory buffer, and exposes a REST API
+that the browser dashboard polls (no Socket.IO).
 
 **Mock mode works with no Nano**, through the exact same pipeline as BLE mode. (Both
 bricks are provided by App Lab, so the app runs on the UNO Q / in App Lab — not on a
@@ -14,14 +14,15 @@ plain laptop.)
 ## Pipeline
 ```
                               ┌─ TsStore.write(sample)        # 9 metrics -> TimeSeriesStore brick
-source.lines() -> parse_line ─┼─ SampleStore.append(sample)   # in-memory rolling buffer (dashboard reads)
-   mock / ble                 └─ WebUI.send_message("imu_sample")   # real-time push
-                                 REST: /status /latest /series /clear /export_csv
+source.lines() -> parse_line ─┤
+   mock / ble                 └─ SampleStore.append(sample)   # in-memory rolling buffer
+
+browser ── polls /api/status /api/latest /api/series every ~300ms ──► WebUI brick (REST)
 ```
 Each sample is written to the TimeSeriesStore as 9 separate metrics
 (`ax_ms2, ay_ms2, az_ms2, gx_dps, gy_dps, gz_dps, acc_norm, gyro_norm, phase`) via
-`db.write_sample(metric, value)`. The dashboard reads from the in-memory buffer (see
-the assumption note below), so it works regardless of the TS read API.
+`db.write_sample(metric, value)`. The dashboard **polls** the WebUI brick's REST API
+(no Socket.IO) and reads from the in-memory buffer, so it works regardless of the TS read API.
 
 ## Payload contract (matches the Nano firmware)
 ```
@@ -37,12 +38,15 @@ python/
   store.py                               # in-memory rolling buffer, status, series, CSV
   ts_store.py                            # TimeSeriesStore brick: write_sample per metric (SDK here)
   mock_source.py  ble_receiver.py        # the two SensorSource implementations
-  webui_server.py                        # WebUI brick: expose_api + send_message (SDK here)
-  main.py                                # --mode mock|ble; wire pipeline; web_ui.start()
+  webui_server.py                        # WebUI brick: expose_api REST routes (SDK here)
+  main.py                                # --mode mock|ble; wire pipeline; App.run()
 sketch/                                  # placeholder MCU sketch — unused (BLE is Linux-side)
   sketch.ino  sketch.yaml
 assets/
-  index.html  app.js  styles.css         # Socket.IO + canvas-chart dashboard (no CDN)
+  index.html  app.js  tailwind.css       # vendored Tailwind (offline) + REST polling;
+                                          # canvas charts: acc_norm, gyro_norm, phase
+tools/tailwind/                          # dev-only: rebuild assets/tailwind.css (not synced)
+  input.css  tailwind.config.js  build.sh
 ```
 
 ## Run on the UNO Q (App Lab)
@@ -64,7 +68,8 @@ assets/
 | POST   | `/clear`       | `{cleared: true, removed: N}` (clears the in-memory dashboard buffer) |
 | GET    | `/export_csv`  | `{filename, csv}` |
 
-Real-time: `web_ui.send_message("imu_sample", sample_dict)` → browser `socket.on("imu_sample", …)`.
+Updates: the browser **polls** `/api/series` + `/api/latest` (~300 ms) and `/api/status` (~1 s).
+No Socket.IO — keeps the UI dependency-free and robust on the brick.
 
 ## Off-device check (no SDK on a laptop)
 The dev extras (`tests/`, `pyproject.toml`) were dropped to match the App Lab layout, so
@@ -77,13 +82,26 @@ cd python && python -c "import config, models, parser, store, ts_store, webui_se
 Both should succeed (brick/`bleak` imports are lazy). The brick/BLE behaviour itself can
 only be exercised on the UNO Q.
 
-## Notes (API confirmed from the brick examples)
-- Server started with **`web_ui.start()`** (serves static assets + API, blocks).
-- `expose_api("GET", "/path", handler)` (dict-returning) → served under **`/api/...`**.
-  The dashboard tries `/api/<x>` then `/<x>`.
-- Real-time push via `send_message` → browser Socket.IO loaded from
-  `/socket.io/socket.io.js` (if your build doesn't serve it there, vendor
-  `assets/libs/socket.io.min.js`; the page then polls `/latest`).
+## Notes (API confirmed from working App Lab dashboards)
+- Started with **`App.run()`** (`arduino.app_utils`) — starts all bricks (WebUI +
+  TimeSeriesStore). `WebUI()` is constructed before `App.run()` so the brick is registered.
+- `expose_api(method, path, handler)` — register the **full path incl. `/api/`** (the brick
+  does not auto-prefix); handler signature is `handler(_req=None) -> dict`.
+- **No Socket.IO**: the dashboard polls the REST endpoints. This matches the proven
+  community example (philippe86220/uno-q-sensors-webui) and avoids socket.io client
+  serving/vendoring entirely.
+- Static UI is served from `assets/` (entry `index.html`); the `assets/` folder must be
+  added from outside the App Lab IDE (e.g. via `sync.sh`).
+- Styling uses **vendored Tailwind** — `assets/tailwind.css` is a prebuilt, minified file
+  (~8 KB, only the classes actually used) linked via `<link>`. **Fully offline, no CDN.**
+  Rebuild it after changing classes in `index.html`/`app.js`:
+  ```bash
+  cd arduino_uno_q && ./tools/tailwind/build.sh   # runs Tailwind v3 CLI via npx (needs internet once)
+  ```
+  `tools/tailwind/` is dev-only and is **not** synced to the board (only `python/` + `assets/`).
+- shadcn/ui was **not** used — it requires a React build pipeline, not a plain HTML page.
+- Charts are plain `<canvas>` (acc_norm, gyro_norm line charts + a phase step chart),
+  fed from `/api/series`. No charting library.
 
 ### TimeSeriesStore
 - `app.yaml` declares both bricks (`arduino:web_ui`, `arduino:dbstorage_tsstore`).
