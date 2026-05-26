@@ -40,8 +40,19 @@ class TsStore:
             self.db.write_sample(metric, d[field])
 
     def read_last(self, metric: str):
-        """Best-effort latest value from the TS store (alt/future path; unused by UI)."""
+        """Latest value for a metric from the TS store (alt/future path; UI uses the buffer)."""
         try:
             return self.db.read_last_sample(metric)
         except Exception:
             return None
+
+    def read_range(self, metric: str, start_from: str, end_to: str):
+        """Historical samples in an ISO8601 time range (for future analytics)."""
+        return self.db.read_samples(metric, start_from=start_from, end_to=end_to)
+
+    def stop(self) -> None:
+        """Cleanly stop the TimeSeriesStore service."""
+        try:
+            self.db.stop()
+        except Exception:
+            pass

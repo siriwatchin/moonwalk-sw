@@ -9,7 +9,7 @@ Verified usage (Arduino App Lab examples):
     ui = WebUI()
     ui.expose_api("GET", "/status", handler)         # handler returns a dict
     ui.send_message("temperature", {...})            # real-time push (Socket.IO)
-The app is started elsewhere via arduino.app_utils.App.run().
+    web_ui.start()                                    # serves static assets + /api/*
 """
 
 from __future__ import annotations
@@ -43,3 +43,7 @@ class WebUIServer:
     def push(self, sample) -> None:
         """Push one new sample to all connected browser clients."""
         self.ui.send_message("imu_sample", sample.to_dict())
+
+    def start(self) -> None:
+        """Start the WebUI brick: serve static assets + /api/* and block."""
+        self.ui.start()
