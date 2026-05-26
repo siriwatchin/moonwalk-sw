@@ -4,6 +4,10 @@ bleak is async; the runner consumes a blocking lines() iterator. An internal thr
 runs the asyncio loop (scan/connect/subscribe) and pushes raw CSV lines into a
 thread-safe queue that lines() drains — so BleNanoReceiver is a drop-in for
 MockNanoSource. `bleak` is imported lazily so mock mode works without it installed.
+
+Supports targeting a specific device address (from the dashboard scan/connect flow)
+and clean stop() so the SourceManager can switch sources live. Every state transition
+is printed with a `[ble]` prefix for bring-up debugging.
 """
 
 from __future__ import annotations
@@ -11,29 +15,76 @@ from __future__ import annotations
 import asyncio
 import queue
 import threading
-from typing import Iterator
+from typing import Iterator, Optional
 
 from config import CHAR_UUID, DEVICE_NAME
 
+_QUEUE_MAX = 2000     # ~100 s at 20 Hz; guards memory if the consumer ever stalls
+_SENTINEL = object()  # pushed to unblock lines() on stop
+
+
+def scan(timeout: float = 6.0) -> list[dict]:
+    """Discover nearby BLE devices. Returns [{"name","address"}] (named first).
+
+    Runs a throwaway event loop — call only when NOT connected (one adapter).
+    """
+    from bleak import BleakScanner
+
+    async def _discover():
+        devices = await BleakScanner.discover(timeout=timeout)
+        out = []
+        for d in devices:
+            out.append({"name": d.name or "(unknown)", "address": d.address})
+        # Named devices first (NanoIMU is what we care about), then the rest.
+        out.sort(key=lambda x: (x["name"] == "(unknown)", x["name"]))
+        return out
+
+    return asyncio.run(_discover())
+
 
 class BleNanoReceiver:
-    def __init__(self):
-        self._queue: "queue.Queue[str]" = queue.Queue()
+    def __init__(self, address: Optional[str] = None):
+        # address=None -> scan + connect by name DEVICE_NAME (default NanoIMU).
+        self._address = address
+        self._queue: "queue.Queue" = queue.Queue(maxsize=_QUEUE_MAX)
         self._status = "starting"
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._started = False
+        self._dropped = False
+        self._stop = threading.Event()
 
     def status(self) -> str:
         return self._status
 
-    async def _run_once(self) -> None:
-        from bleak import BleakClient, BleakScanner
+    def stop(self) -> None:
+        """Signal the loop to stop and unblock lines()."""
+        self._stop.set()
+        try:
+            self._queue.put_nowait(_SENTINEL)   # wake a blocked lines()
+        except queue.Full:
+            pass
 
-        self._status = "scanning"
-        device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=15.0)
+    def _set_status(self, s: str) -> None:
+        if s != self._status:
+            self._status = s
+            print(f"[ble] {s}", flush=True)
+
+    async def _resolve_device(self):
+        from bleak import BleakScanner
+        if self._address:
+            self._set_status(f"connecting {self._address}")
+            return await BleakScanner.find_device_by_address(self._address, timeout=15.0)
+        self._set_status("scanning")
+        return await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=15.0)
+
+    async def _run_once(self) -> None:
+        from bleak import BleakClient
+
+        device = await self._resolve_device()
         if device is None:
-            self._status = "NanoIMU not found"
+            self._set_status(f"{self._address or DEVICE_NAME} not found")
             return
+        self._set_status(f"found {getattr(device, 'name', None) or DEVICE_NAME} ({device.address})")
 
         disconnected = asyncio.Event()
 
@@ -41,23 +92,41 @@ class BleNanoReceiver:
             disconnected.set()
 
         def on_notify(_char, data: bytearray) -> None:
-            self._queue.put(data.decode("utf-8", errors="replace").strip())
+            line = data.decode("utf-8", errors="replace").strip()
+            try:
+                self._queue.put_nowait(line)
+            except queue.Full:
+                try:
+                    self._queue.get_nowait()
+                    self._queue.put_nowait(line)
+                except queue.Empty:
+                    pass
+                if not self._dropped:
+                    self._dropped = True
+                    print("[ble] WARNING: queue full, dropping oldest samples", flush=True)
 
         async with BleakClient(device, disconnected_callback=on_disconnect) as client:
-            self._status = "connected"
+            self._set_status("connected")
             await client.start_notify(CHAR_UUID, on_notify)
-            await disconnected.wait()
+            # Wait until the peripheral drops OR we're asked to stop.
+            while not disconnected.is_set() and not self._stop.is_set():
+                await asyncio.sleep(0.2)
 
-        self._status = "disconnected"
+        if self._stop.is_set():
+            self._set_status("stopped")
+        else:
+            self._set_status("disconnected / reconnecting")
 
     def _run_loop(self) -> None:
         async def forever():
-            while True:
+            while not self._stop.is_set():
                 try:
                     await self._run_once()
-                except Exception as exc:        # keep the gateway alive across BLE errors
-                    self._status = f"error: {exc}"
-                await asyncio.sleep(2.0)
+                except Exception as exc:        # keep going across BLE errors
+                    self._set_status(f"error: {exc}")
+                if self._stop.is_set():
+                    break
+                await asyncio.sleep(2.0)         # backoff before reconnecting
 
         asyncio.run(forever())
 
@@ -65,5 +134,8 @@ class BleNanoReceiver:
         if not self._started:
             self._thread.start()
             self._started = True
-        while True:
-            yield self._queue.get()             # blocks until the next notification
+        while not self._stop.is_set():
+            item = self._queue.get()            # blocks until next notification / sentinel
+            if item is _SENTINEL:
+                break
+            yield item

@@ -54,9 +54,14 @@ class MockNanoSource:
         self._rng = random.Random(seed)
         self._paced = paced       # sleep between samples (real-time); off for tests
         self._t_ms = 0
+        self._stopped = False
 
     def status(self) -> str:
         return "MOCK"
+
+    def stop(self) -> None:
+        """Ask lines() to end so the SourceManager can switch away cleanly."""
+        self._stopped = True
 
     def _sample_line(self, state: StateProfile) -> str:
         r = self._rng
@@ -82,9 +87,11 @@ class MockNanoSource:
 
     def lines(self) -> Iterator[str]:
         interval_s = INTERVAL_MS / 1000.0
-        while True:
+        while not self._stopped:
             for state in self._cycle:
                 for _ in range(state.samples):
+                    if self._stopped:
+                        return
                     yield self._sample_line(state)
                     if self._paced:
                         time.sleep(interval_s)

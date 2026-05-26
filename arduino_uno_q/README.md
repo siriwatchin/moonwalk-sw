@@ -37,9 +37,10 @@ python/
   config.py  models.py  parser.py        # data model + parsing (no SDK imports)
   store.py                               # in-memory rolling buffer, status, series, CSV
   ts_store.py                            # TimeSeriesStore brick: write_sample per metric (SDK here)
-  mock_source.py  ble_receiver.py        # the two SensorSource implementations
+  mock_source.py  ble_receiver.py        # the two sources (stoppable; BLE: scan + connect-by-address)
+  source_manager.py                      # owns active source + ingest worker; live mock↔BLE switch
   webui_server.py                        # WebUI brick: expose_api REST routes (SDK here)
-  main.py                                # --mode mock|ble; wire pipeline; App.run()
+  main.py                                # initial mode; wire manager + WebUI; App.run()
 sketch/                                  # placeholder MCU sketch — unused (BLE is Linux-side)
   sketch.ino  sketch.yaml
 assets/
@@ -58,30 +59,40 @@ tools/tailwind/                          # dev-only: rebuild assets/tailwind.css
    phase label, and the 3 charts update live.
 
 ## Choosing the source (mock vs BLE)
-The data source is resolved at startup with this precedence:
-**`--mode` arg → `MODE` env var → `config.DEFAULT_MODE`**. App Lab runs `main.py` with no
-args, so on the board pick one of:
-- **Edit `python/config.py`**: `DEFAULT_MODE = "ble"` (surest — re-sync + Run), or
-- set env **`MODE=ble`** if your App Lab run lets you set environment variables.
-Switching source = change the setting and **re-run** (no live toggle by design).
-The startup log prints e.g. `mode=ble [default]` so you can confirm which was chosen.
+**Live, from the dashboard** — the "Source" card lets you switch **Mock | BLE**, **Scan**
+for BLE devices, pick one from the **dropdown**, and **Connect** — all at runtime, no
+re-run (handled by `source_manager.SourceManager`).
 
-### BLE bring-up checklist (mode = ble)
-- `pip install bleak` on the UNO Q (mock mode doesn't need it; if missing, the badge
-  shows `error: No module named 'bleak'`).
-- Bluetooth up on the UNO Q (BlueZ powered on) and the **Nano flashed + advertising
-  `NanoIMU`** (see `../arduino/BRINGUP.md`). Only **one** BLE central at a time.
-- Expected badge flow: `ble · scanning` → `ble · connected` (green/live); moving the Nano
-  changes the values + charts. `ble · NanoIMU not found` means it can't see the Nano.
+The **initial** source at startup still follows **`--mode` arg → `MODE` env var →
+`config.DEFAULT_MODE`** (App Lab runs with no args, so set `DEFAULT_MODE`/`MODE` to pick
+where it begins). After boot you can switch freely from the UI.
+
+> Scan needs a free BLE adapter, so it's only allowed when **not** BLE-connected (switch to
+> Mock or disconnect first). Selecting BLE with no chosen device auto-finds `NanoIMU` by name.
+
+### BLE bring-up
+Full step-by-step runbook (prereqs, BlueZ, expected `[ble]` console log, troubleshooting)
+is in **[`BRINGUP.md`](BRINGUP.md)**. In short: `pip install bleak` on the UNO Q, Bluetooth
+powered on, Nano advertising `NanoIMU` (see `../arduino/BRINGUP.md`), one central at a time;
+expect the badge to go `ble · scanning → ble · connected`.
+
+The receiver prints each hop with a `[ble]` prefix, and `main.py` logs a periodic
+`[ingest] good=… bad=… rate=…Hz` line for headless debugging.
 
 ### REST API (exposed via `expose_api`, served under `/api/...`)
 | Method | Path           | Returns |
 | ------ | -------------- | ------- |
-| GET    | `/status`      | `{mode, source_status, live, count, buffer_max, uptime_s, …}` |
+| GET    | `/status`      | `{mode, source_status, live, count, bad, rate_hz, tsstore, buffer_max, age_s, uptime_s}` |
 | GET    | `/latest`      | `{latest: {…sample…}}` |
 | GET    | `/series`      | `{t:[…], acc_norm:[…], gyro_norm:[…], phase:[…]}` (last ~200, for charts) |
 | POST   | `/clear`       | `{cleared: true, removed: N}` (clears the in-memory dashboard buffer) |
 | GET    | `/export_csv`  | `{filename, csv}` |
+| POST   | `/source`      | body `{mode:"mock"\|"ble", address?}` → switch source live |
+| POST   | `/ble/scan`    | body `{timeout?}` → `{devices:[{name,address}]}` |
+| POST   | `/ble/connect` | body `{address}` → connect BLE to that device |
+
+POST handlers receive the JSON body as a dict (`handler(data)`); GET handlers take `_req=None`.
+`/api/status` also returns `selected_mode`, `target_address`, `connected`, `devices`.
 
 Updates: the browser **polls** `/api/series` + `/api/latest` (~300 ms) and `/api/status` (~1 s).
 No Socket.IO — keeps the UI dependency-free and robust on the brick.

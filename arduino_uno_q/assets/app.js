@@ -96,18 +96,84 @@ async function pollData() {
   } catch (_) { /* transient — next tick retries */ }
 }
 
+// Highlight the active source button.
+function reflectMode(mode) {
+  const on = "bg-[#1f6f3d] border-[#1f6f3d]";
+  for (const [id, m] of [["srcMock", "mock"], ["srcBle", "ble"]]) {
+    const el = $(id);
+    el.className = el.className.replace(" " + on, "");
+    if (mode === m) el.className += " " + on;
+  }
+  // BLE controls only matter in BLE mode.
+  const bleMode = mode === "ble";
+  $("btnScan").disabled = !bleMode;
+  $("devSel").disabled = !bleMode;
+  $("btnConnect").disabled = !bleMode || !$("devSel").value;
+}
+
 async function pollStatus() {
   try {
     const s = await api("/status").then((r) => r.json());
     setBadge(`${s.mode || "?"} · ${s.source_status || ""}${s.live ? " · live" : ""}`,
              (s.mode === "mock" || s.live) ? "live" : "down");
     $("meta").textContent = `samples: ${s.count}`
+      + (s.rate_hz != null ? ` · ${s.rate_hz}Hz` : "")
+      + (s.bad ? ` · bad:${s.bad}` : "")
       + (s.tsstore ? ` · db:${s.tsstore}` : "")
       + (s.age_s != null ? ` · last ${s.age_s}s ago` : "");
+    reflectMode(s.selected_mode || s.mode);
   } catch (_) {
     setBadge("server unreachable", "down");
   }
 }
+
+// --- source controls ---
+async function postJSON(path, body) {
+  return api(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+}
+
+$("srcMock").onclick = async () => {
+  $("srcHint").textContent = "switching to mock…";
+  await postJSON("/source", { mode: "mock" });
+  $("srcHint").textContent = "";
+  pollStatus();
+};
+$("srcBle").onclick = async () => {
+  await postJSON("/source", { mode: "ble" });   // start BLE (connect by name)
+  $("srcHint").textContent = "BLE selected — Scan to pick a device, or it auto-finds NanoIMU";
+  pollStatus();
+};
+$("btnScan").onclick = async () => {
+  $("srcHint").textContent = "scanning…";
+  $("btnScan").disabled = true;
+  try {
+    const { devices } = await postJSON("/ble/scan", { timeout: 6 }).then((r) => r.json());
+    const sel = $("devSel");
+    sel.innerHTML = '<option value="">— select device —</option>';
+    (devices || []).forEach((d) => {
+      const o = document.createElement("option");
+      o.value = d.address;
+      o.textContent = `${d.name}  (${d.address})`;
+      sel.appendChild(o);
+    });
+    $("srcHint").textContent = `found ${devices ? devices.length : 0} device(s)`;
+  } catch (_) {
+    $("srcHint").textContent = "scan failed";
+  }
+  $("btnScan").disabled = false;
+};
+$("devSel").onchange = () => { $("btnConnect").disabled = !$("devSel").value; };
+$("btnConnect").onclick = async () => {
+  const address = $("devSel").value;
+  if (!address) return;
+  $("srcHint").textContent = `connecting ${address}…`;
+  await postJSON("/ble/connect", { address });
+  pollStatus();
+};
 
 $("btnClear").onclick = () => api("/clear", { method: "POST" });
 $("btnExport").onclick = async () => {

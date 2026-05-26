@@ -28,9 +28,12 @@ class SampleStore:
         self._status = "starting"
         self._mode = "?"
         self._count = 0
+        self._bad = 0
         self._last_recv = 0.0
         self._started = time.time()
         self._tsstore = False
+        # Short EWMA of the inter-sample interval -> rate_hz (robust to bursts).
+        self._ewma_dt = 0.0
 
     # ---- writers --------------------------------------------------------
     def set_mode(self, mode: str) -> None:
@@ -47,9 +50,19 @@ class SampleStore:
 
     def append(self, sample: ImuSample) -> None:
         with self._lock:
+            now = time.time()
+            if self._last_recv:
+                dt = now - self._last_recv
+                # EWMA so rate_hz reflects the recent stream, not the whole run.
+                self._ewma_dt = dt if self._ewma_dt == 0.0 else 0.9 * self._ewma_dt + 0.1 * dt
             self._dq.append(sample)
             self._count += 1
-            self._last_recv = time.time()
+            self._last_recv = now
+
+    def note_bad(self) -> None:
+        """Record one unparseable / dropped line (truncation, MTU, noise)."""
+        with self._lock:
+            self._bad += 1
 
     def clear(self) -> int:
         with self._lock:
@@ -79,12 +92,15 @@ class SampleStore:
     def status(self) -> dict:
         with self._lock:
             age = (time.time() - self._last_recv) if self._last_recv else None
+            rate = round(1.0 / self._ewma_dt, 1) if self._ewma_dt > 0 else 0.0
             return {
                 "mode": self._mode,
                 "source_status": self._status,
                 "tsstore": "running" if self._tsstore else "off",
                 "live": age is not None and age < 1.5,
                 "count": self._count,
+                "bad": self._bad,
+                "rate_hz": rate,
                 "buffered": len(self._dq),
                 "buffer_max": self._dq.maxlen,
                 "age_s": round(age, 2) if age is not None else None,

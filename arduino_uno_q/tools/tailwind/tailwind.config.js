@@ -4,8 +4,11 @@
  */
 module.exports = {
   content: ["assets/index.html", "assets/app.js"],
-  // bg-phaseN is applied dynamically from app.js — keep them even if scanning misses them.
-  safelist: ["bg-phase0", "bg-phase1", "bg-phase2", "bg-phase3"],
+  // Classes applied dynamically from app.js — keep them even if scanning misses them.
+  safelist: [
+    "bg-phase0", "bg-phase1", "bg-phase2", "bg-phase3",
+    "bg-[#1f6f3d]", "border-[#1f6f3d]",   // active source-button highlight (reflectMode)
+  ],
   theme: {
     extend: {
       colors: {

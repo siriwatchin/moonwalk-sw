@@ -1,31 +1,30 @@
 """UNO Q IMU WebUI app entry point.
 
-    python main.py --mode mock     # develop/demo the dashboard
-    python main.py --mode ble      # receive a real NanoIMU over BLE
+    python main.py --mode mock     # start in mock (default)
+    python main.py --mode ble      # start receiving a real NanoIMU over BLE
 
-Pipeline (identical for mock and BLE):
-    source.lines() -> parse_line -> TimeSeriesStore.write + SampleStore.append
+The source can also be switched live from the dashboard (Mock/BLE + scan/connect) via the
+SourceManager — `--mode` / MODE env / config.DEFAULT_MODE only sets the *initial* source.
+
+Pipeline (mock and BLE alike):
+    source.lines() -> parse_line -> SampleStore.append (+ note_bad) -> TimeSeriesStore.write
 The browser polls the WebUI brick's /api/* endpoints (REST, no Socket.IO).
 
-This app runs on the Arduino App Lab **WebUI Brick** (+ TimeSeriesStore Brick) — there is
-no other server. Those bricks are provided by App Lab on the UNO Q; importing them
-off-device will fail by design (run it on the UNO Q / in App Lab).
+Runs on the Arduino App Lab WebUI Brick (+ TimeSeriesStore Brick); both are provided by
+App Lab on the UNO Q (importing them off-device fails by design).
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-import threading
 
 from config import BUFFER_MAXLEN, DEFAULT_MODE, UI_PORT
-from models import SensorSource
-from parser import parse_line
 from store import SampleStore
 
 
 def resolve_mode(cli_mode: str | None) -> tuple[str, str]:
-    """Pick the data source: --mode arg > MODE env var > config.DEFAULT_MODE.
+    """Initial source: --mode arg > MODE env var > config.DEFAULT_MODE.
 
     Returns (mode, origin) where origin is 'cli' | 'env' | 'default' for logging.
     """
@@ -39,70 +38,33 @@ def resolve_mode(cli_mode: str | None) -> tuple[str, str]:
         raise SystemExit(f"invalid mode {mode!r} (use mock|ble)")
     return mode, origin
 
-_logged: set[str] = set()
-
-
-def _log_once(tag: str, exc: Exception) -> None:
-    """Log the first error per tag so a flaky brick call doesn't spam the console."""
-    if tag not in _logged:
-        _logged.add(tag)
-        print(f"[warn] {tag} failed: {exc} (further errors suppressed)")
-
-
-def build_source(mode: str) -> SensorSource:
-    """Construct the data source. This is the only mode-specific line."""
-    if mode == "mock":
-        from mock_source import MockNanoSource
-        return MockNanoSource()
-    if mode == "ble":
-        from ble_receiver import BleNanoReceiver
-        return BleNanoReceiver()
-    raise ValueError(f"unknown mode: {mode!r}")
-
-
-def run_source(source: SensorSource, store: SampleStore, tsstore) -> None:
-    """Consume raw lines forever: parse -> in-memory buffer + TimeSeriesStore."""
-    for raw in source.lines():
-        store.set_status(source.status())
-        sample = parse_line(raw)
-        if sample is None:
-            continue
-        # In-memory buffer first, so the dashboard keeps working even if the TS brick errs.
-        store.append(sample)
-        try:
-            tsstore.write(sample)     # persist all 9 metrics to TimeSeriesStore
-        except Exception as exc:
-            _log_once("tsstore.write", exc)
-
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="UNO Q IMU WebUI gateway")
     ap.add_argument("--mode", choices=["mock", "ble"], default=None,
-                    help="data source; overrides MODE env var / config.DEFAULT_MODE")
+                    help="initial data source; overrides MODE env / config.DEFAULT_MODE")
     ap.add_argument("--buffer", type=int, default=BUFFER_MAXLEN)
     args = ap.parse_args()
 
     mode, origin = resolve_mode(args.mode)
     store = SampleStore(maxlen=args.buffer)
-    store.set_mode(mode)
-    source = build_source(mode)
-    store.set_status(source.status())
 
     # TimeSeriesStore Brick: persist every sample. (Imports the Arduino SDK.)
     from ts_store import TsStore
     tsstore = TsStore()
     store.set_tsstore(True)
 
-    # WebUI Brick: construct + register the /api/* routes. (Imports the Arduino SDK.)
-    # Keep a reference so the brick stays registered with the App framework.
+    # SourceManager owns the active source + ingest worker; start in the initial mode.
+    from source_manager import SourceManager
+    mgr = SourceManager(store, tsstore)
+    mgr.select(mode)
+
+    # WebUI Brick: register the /api/* routes (read + control). Keep a reference so the
+    # brick stays registered with the App framework before App.run().
     from webui_server import WebUIServer
-    _server = WebUIServer(store)  # noqa: F841 — must exist before App.run()
+    _server = WebUIServer(store, mgr)  # noqa: F841
 
-    # Source runs in the background; App.run() owns the main thread.
-    worker = threading.Thread(target=run_source, args=(source, store, tsstore), daemon=True)
-    worker.start()
-
-    print(f"UNO Q IMU dashboard starting (mode={mode} [{origin}], port={UI_PORT})")
+    print(f"UNO Q IMU dashboard starting (initial mode={mode} [{origin}], port={UI_PORT})")
     from arduino.app_utils import App
     try:
         App.run()         # starts all bricks (WebUI + TimeSeriesStore) and blocks

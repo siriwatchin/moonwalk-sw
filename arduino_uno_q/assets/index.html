@@ -20,6 +20,21 @@
   </header>
 
   <main class="p-5 grid gap-[18px] max-w-[1100px] [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
+    <section class="bg-[#161b22] border border-[#21262d] rounded-xl p-4 col-span-full">
+      <h2 class="text-[13px] uppercase tracking-wider text-[#8b949e] mb-3">Source</h2>
+      <div class="flex flex-wrap items-center gap-2">
+        <button id="srcMock" class="rounded-lg px-3 py-1.5 text-[13px] border border-[#30363d]">Mock</button>
+        <button id="srcBle"  class="rounded-lg px-3 py-1.5 text-[13px] border border-[#30363d]">BLE</button>
+        <span class="w-px h-5 bg-[#30363d] mx-1"></span>
+        <button id="btnScan" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px] disabled:opacity-40" disabled>Scan</button>
+        <select id="devSel" class="bg-[#0e1116] border border-[#30363d] rounded-lg px-2 py-1.5 text-[13px] min-w-[220px] disabled:opacity-40" disabled>
+          <option value="">— scan for devices —</option>
+        </select>
+        <button id="btnConnect" class="bg-[#1f6feb] hover:brightness-110 rounded-lg px-3 py-1.5 text-[13px] font-semibold disabled:opacity-40" disabled>Connect</button>
+        <span id="srcHint" class="text-xs text-[#8b949e]"></span>
+      </div>
+    </section>
+
     <section class="bg-[#161b22] border border-[#21262d] rounded-xl p-4">
       <h2 class="text-[13px] uppercase tracking-wider text-[#8b949e] mb-3">Phase</h2>
       <div id="phase" class="inline-block mt-1 px-3.5 py-1.5 rounded-lg font-bold text-[15px] bg-phase0">—</div>
