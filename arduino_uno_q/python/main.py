@@ -20,7 +20,7 @@ import argparse
 import os
 
 from config import BUFFER_MAXLEN, DEFAULT_MODE, UI_PORT
-from store import SampleStore
+from registry import DeviceRegistry
 
 
 def resolve_mode(cli_mode: str | None) -> tuple[str, str]:
@@ -47,22 +47,24 @@ def main() -> None:
     args = ap.parse_args()
 
     mode, origin = resolve_mode(args.mode)
-    store = SampleStore(maxlen=args.buffer)
+    registry = DeviceRegistry(maxlen=args.buffer)
 
-    # TimeSeriesStore Brick: persist every sample. (Imports the Arduino SDK.)
+    # TimeSeriesStore Brick: persist every sample (per-device metrics). (Arduino SDK.)
     from ts_store import TsStore
     tsstore = TsStore()
-    store.set_tsstore(True)
 
-    # SourceManager owns the active source + ingest worker; start in the initial mode.
+    # SourceManager owns the concurrent sources + ingest workers (multi-device).
     from source_manager import SourceManager
-    mgr = SourceManager(store, tsstore)
-    mgr.select(mode)
+    mgr = SourceManager(registry, tsstore)
+    if mode == "mock":
+        mgr.set_mode("mock")    # spins up the normal + injured mock pair
+    else:
+        mgr.set_mode("ble")     # devices added later via the dashboard / connect()
 
     # WebUI Brick: register the /api/* routes (read + control). Keep a reference so the
     # brick stays registered with the App framework before App.run().
     from webui_server import WebUIServer
-    _server = WebUIServer(store, mgr)  # noqa: F841
+    _server = WebUIServer(registry, mgr)  # noqa: F841
 
     print(f"UNO Q IMU dashboard starting (initial mode={mode} [{origin}], port={UI_PORT})")
     from arduino.app_utils import App

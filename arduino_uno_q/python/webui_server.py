@@ -1,8 +1,7 @@
 """WebUI Brick server layer — the ONLY module that imports the Arduino WebUI brick.
 
-Wraps `arduino.app_bricks.web_ui.WebUI`: registers the dashboard REST API via
-`expose_api`. The browser polls GET endpoints and POSTs control actions (source switch,
-BLE scan/connect). No Socket.IO.
+Registers the multi-device dashboard REST API via `expose_api`. The browser polls GET
+endpoints (one JSON blob keyed by device) and POSTs control actions. No Socket.IO.
 
 Confirmed brick API:
     web = WebUI()
@@ -13,49 +12,48 @@ Confirmed brick API:
 
 from __future__ import annotations
 
-from store import SampleStore
+from registry import DeviceRegistry
 
 
 class WebUIServer:
-    """Registers the dashboard REST API on the WebUI brick."""
+    """Registers the dashboard REST API on the WebUI brick (multi-device)."""
 
-    def __init__(self, store: SampleStore, manager):
+    def __init__(self, registry: DeviceRegistry, manager):
         from arduino.app_bricks.web_ui import WebUI  # required — UNO Q / App Lab only
 
-        self.store = store
+        self.reg = registry
         self.mgr = manager
         self.ui = WebUI()
         self._register_api()
 
-    def _status(self) -> dict:
-        # Merge buffer/ingest status with the source-manager state for one call.
-        return {**self.store.status(), **self.mgr.state()}
-
     def _register_api(self) -> None:
-        ui, store, mgr = self.ui, self.store, self.mgr
+        ui, reg, mgr = self.ui, self.reg, self.mgr
 
-        # ---- GET: read state (handlers take an optional request arg) -----
-        ui.expose_api("GET", "/api/status", lambda _req=None: self._status())
-        ui.expose_api("GET", "/api/latest", lambda _req=None: {"latest": store.latest()})
-        ui.expose_api("GET", "/api/series", lambda _req=None: store.series())
-        ui.expose_api("GET", "/api/export_csv", lambda _req=None: {
-            "filename": "imu_samples.csv",
-            "csv": store.to_csv(),
+        # ---- GET: read state (keyed by device; no query params) ----------
+        ui.expose_api("GET", "/api/status", lambda _req=None: {
+            **mgr.state(),                 # mode, scan_devices, devices[]
+            "devices_status": reg.status(),  # per-device buffer/ingest stats
         })
+        ui.expose_api("GET", "/api/latest", lambda _req=None: {"devices": reg.latest()})
+        ui.expose_api("GET", "/api/series", lambda _req=None: {"devices": reg.series()})
 
         # ---- POST: control actions (handlers receive the JSON body dict) -
         ui.expose_api("POST", "/api/clear", lambda data=None: {
-            "cleared": True, "removed": store.clear(),
+            "cleared": True, "removed": reg.clear_buffers(),
         })
-        # Switch source: {"mode":"mock"|"ble","address":<optional>}
-        ui.expose_api("POST", "/api/source", lambda data=None: mgr.select(
-            (data or {}).get("mode", "mock"), (data or {}).get("address"),
+        # Top-level mode: {"mode":"mock"|"ble"}  (mock spins up normal+injured pair)
+        ui.expose_api("POST", "/api/source", lambda data=None: mgr.set_mode(
+            (data or {}).get("mode", "mock"),
         ))
         # Scan for BLE devices -> {"devices":[{name,address}]}
         ui.expose_api("POST", "/api/ble/scan", lambda data=None: {
             "devices": mgr.scan(float((data or {}).get("timeout", 6.0))),
         })
-        # Connect to a chosen device: {"address":"…"}
-        ui.expose_api("POST", "/api/ble/connect", lambda data=None: mgr.select(
-            "ble", (data or {}).get("address"),
+        # Add a BLE device: {"address":"…","label":<opt>}
+        ui.expose_api("POST", "/api/ble/connect", lambda data=None: mgr.connect(
+            (data or {}).get("address"), (data or {}).get("label"),
+        ))
+        # Remove a device: {"key":"…"}
+        ui.expose_api("POST", "/api/ble/disconnect", lambda data=None: mgr.disconnect(
+            (data or {}).get("key"),
         ))

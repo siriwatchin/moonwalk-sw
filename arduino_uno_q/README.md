@@ -37,8 +37,9 @@ python/
   config.py  models.py  parser.py        # data model + parsing (no SDK imports)
   store.py                               # in-memory rolling buffer, status, series, CSV
   ts_store.py                            # TimeSeriesStore brick: write_sample per metric (SDK here)
-  mock_source.py  ble_receiver.py        # the two sources (stoppable; BLE: scan + connect-by-address)
-  source_manager.py                      # owns active source + ingest worker; live mock↔BLE switch
+  mock_source.py  ble_receiver.py        # sources (stoppable; mock has normal/altered gaits; BLE by address)
+  registry.py                            # DeviceRegistry: one SampleStore per device (keyed by address)
+  source_manager.py                      # concurrent sources/workers; live add/remove devices
   webui_server.py                        # WebUI brick: expose_api REST routes (SDK here)
   main.py                                # initial mode; wire manager + WebUI; App.run()
 sketch/                                  # placeholder MCU sketch — unused (BLE is Linux-side)
@@ -58,10 +59,20 @@ tools/tailwind/                          # dev-only: rebuild assets/tailwind.css
 3. Open **`http://<uno-q-ip>:7000/`**. Badge shows the source + status; numbers,
    phase label, and the 3 charts update live.
 
+## Multi-device (compare 2+ Nanos)
+The gateway ingests **several Nanos at once**, keyed by **BLE address**, and shows one
+**column per device** so you can compare (e.g. a *normal* vs an *injured* subject). All
+Nanos still advertise `NanoIMU` (no firmware change) — they're told apart by address.
+- **Mock** spins up two synthetic devices, `normal` + `injured` (different gait cycles), so
+  the compare view works with no hardware.
+- **BLE**: **Scan** → pick a device → optional **label** ("normal"/"injured") → **Connect**;
+  repeat to add more. Each connected device shows as a chip with a ✕ to disconnect.
+- Per-device buffers live in `registry.DeviceRegistry`; concurrent sources/workers in
+  `source_manager.SourceManager`; TimeSeriesStore metrics are namespaced `<key>.ax_ms2`, etc.
+
 ## Choosing the source (mock vs BLE)
-**Live, from the dashboard** — the "Source" card lets you switch **Mock | BLE**, **Scan**
-for BLE devices, pick one from the **dropdown**, and **Connect** — all at runtime, no
-re-run (handled by `source_manager.SourceManager`).
+**Live, from the dashboard** — the "Source" card switches **Mock | BLE** and manages BLE
+devices at runtime, no re-run.
 
 The **initial** source at startup still follows **`--mode` arg → `MODE` env var →
 `config.DEFAULT_MODE`** (App Lab runs with no args, so set `DEFAULT_MODE`/`MODE` to pick
@@ -76,23 +87,32 @@ is in **[`BRINGUP.md`](BRINGUP.md)**. In short: `pip install bleak` on the UNO Q
 powered on, Nano advertising `NanoIMU` (see `../arduino/BRINGUP.md`), one central at a time;
 expect the badge to go `ble · scanning → ble · connected`.
 
-The receiver prints each hop with a `[ble]` prefix, and `main.py` logs a periodic
-`[ingest] good=… bad=… rate=…Hz` line for headless debugging.
+The receiver prints each hop with a `[ble]` prefix, and the manager logs a periodic
+`[ingest:<key>] good=… bad=… rate=…Hz` line per device for headless debugging.
+
+### Data-quality signals (per device, in `/api/status`)
+- **`rate_hz`** — effective sample rate (EWMA); expect ~20 Hz.
+- **`bad`** — payload lines that failed to parse (truncation / MTU / noise).
+- **`lost`** — *estimated* dropped samples, inferred from gaps in the Nano's `timestamp_ms`
+  (no sequence number in the payload → an estimate, not exact).
+- **`rel_ms`** (in `/series`) — a gateway 0-based receive clock shared across devices, so two
+  Nanos (whose own `timestamp_ms` are independent millis-since-boot) compare on one axis.
+  Visual alignment for comparison — not hard real-time sync.
 
 ### REST API (exposed via `expose_api`, served under `/api/...`)
 | Method | Path           | Returns |
 | ------ | -------------- | ------- |
-| GET    | `/status`      | `{mode, source_status, live, count, bad, rate_hz, tsstore, buffer_max, age_s, uptime_s}` |
-| GET    | `/latest`      | `{latest: {…sample…}}` |
-| GET    | `/series`      | `{t:[…], acc_norm:[…], gyro_norm:[…], phase:[…]}` (last ~200, for charts) |
-| POST   | `/clear`       | `{cleared: true, removed: N}` (clears the in-memory dashboard buffer) |
-| GET    | `/export_csv`  | `{filename, csv}` |
-| POST   | `/source`      | body `{mode:"mock"\|"ble", address?}` → switch source live |
+| GET    | `/status`      | `{mode, devices:[{key,label,status}], scan_devices:[…], devices_status:{key:{count,bad,rate_hz,live,…}}}` |
+| GET    | `/latest`      | `{devices: {key: {…sample…}}}` |
+| GET    | `/series`      | `{devices: {key: {label, rel_ms, t, acc_norm, gyro_norm, phase}}}` (last ~200) |
+| POST   | `/clear`       | `{cleared: true, removed: N}` (clears all device buffers) |
+| POST   | `/source`      | body `{mode:"mock"\|"ble"}` (mock = normal+injured pair) |
 | POST   | `/ble/scan`    | body `{timeout?}` → `{devices:[{name,address}]}` |
-| POST   | `/ble/connect` | body `{address}` → connect BLE to that device |
+| POST   | `/ble/connect` | body `{address, label?}` → **add** a device |
+| POST   | `/ble/disconnect` | body `{key}` → remove one device |
 
-POST handlers receive the JSON body as a dict (`handler(data)`); GET handlers take `_req=None`.
-`/api/status` also returns `selected_mode`, `target_address`, `connected`, `devices`.
+Reads are **keyed by device** (no `?device=` query params). POST handlers receive the JSON
+body as a dict (`handler(data)`); GET handlers take `_req=None`.
 
 Updates: the browser **polls** `/api/series` + `/api/latest` (~300 ms) and `/api/status` (~1 s).
 No Socket.IO — keeps the UI dependency-free and robust on the brick.

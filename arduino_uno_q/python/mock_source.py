@@ -47,10 +47,28 @@ DEFAULT_CYCLE = [
 ]
 
 
+def cycle_for(gait: str = "normal") -> list[StateProfile]:
+    """Return a cane cycle for a gait profile, so two mock devices look different.
+
+    - "normal":  symmetric swing/stance (the default cycle).
+    - "altered": shorter, weaker swing + longer stance (mimics a guarded/injured gait),
+      so phase 3 (swing) appears less and acc/gyro amplitudes are lower.
+    """
+    if gait == "altered":
+        return [
+            StateProfile("stationary",         acc_std=0.03, gyro_mean=0.3,  gyro_std=0.3, samples=30),
+            StateProfile("swing_or_on_air",    acc_std=1.0,  gyro_mean=30.0, gyro_std=5.0, samples=12),
+            StateProfile("ground_contact",     acc_std=0.05, gyro_mean=12.0, gyro_std=2.0, samples=30),
+            StateProfile("swing_or_on_air",    acc_std=1.0,  gyro_mean=30.0, gyro_std=5.0, samples=12),
+            StateProfile("stationary_or_zero", acc_std=0.03, gyro_mean=0.3,  gyro_std=0.3, samples=30),
+        ]
+    return DEFAULT_CYCLE
+
+
 class MockNanoSource:
     def __init__(self, cycle: Optional[list[StateProfile]] = None,
-                 seed: Optional[int] = None, paced: bool = True):
-        self._cycle = cycle or DEFAULT_CYCLE
+                 seed: Optional[int] = None, paced: bool = True, gait: str = "normal"):
+        self._cycle = cycle or cycle_for(gait)
         self._rng = random.Random(seed)
         self._paced = paced       # sleep between samples (real-time); off for tests
         self._t_ms = 0

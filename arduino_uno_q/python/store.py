@@ -12,7 +12,7 @@ import threading
 import time
 from collections import deque
 
-from config import RECENT_POINTS
+from config import INTERVAL_MS, RECENT_POINTS
 from models import ImuSample
 
 _CSV_FIELDS = [
@@ -24,11 +24,18 @@ _CSV_FIELDS = [
 class SampleStore:
     def __init__(self, maxlen: int):
         self._dq: deque[ImuSample] = deque(maxlen=maxlen)
+        # Gateway receive time (ms, 0-based since this store's first sample) per sample —
+        # a clock common to all devices, so two Nanos can be compared on one time axis
+        # (their own timestamp_ms are independent millis-since-boot).
+        self._recv: deque[int] = deque(maxlen=maxlen)
+        self._t0 = None            # monotonic of first sample
         self._lock = threading.Lock()
         self._status = "starting"
         self._mode = "?"
         self._count = 0
         self._bad = 0
+        self._lost = 0             # estimated dropped samples (from timestamp_ms gaps)
+        self._last_ts = None       # last Nano timestamp_ms (for gap/loss detection)
         self._last_recv = 0.0
         self._started = time.time()
         self._tsstore = False
@@ -50,11 +57,23 @@ class SampleStore:
 
     def append(self, sample: ImuSample) -> None:
         with self._lock:
+            mono = time.monotonic()
             now = time.time()
             if self._last_recv:
                 dt = now - self._last_recv
                 # EWMA so rate_hz reflects the recent stream, not the whole run.
                 self._ewma_dt = dt if self._ewma_dt == 0.0 else 0.9 * self._ewma_dt + 0.1 * dt
+            # Gateway 0-based receive clock (ms) — the common compare axis.
+            if self._t0 is None:
+                self._t0 = mono
+            self._recv.append(int((mono - self._t0) * 1000.0))
+            # Estimate dropped samples from the Nano timestamp gap (no seq number in payload).
+            ts = sample.timestamp_ms
+            if self._last_ts is not None:
+                gap = ts - self._last_ts
+                if gap > 1.8 * INTERVAL_MS:
+                    self._lost += max(0, round(gap / INTERVAL_MS) - 1)
+            self._last_ts = ts
             self._dq.append(sample)
             self._count += 1
             self._last_recv = now
@@ -68,6 +87,10 @@ class SampleStore:
         with self._lock:
             n = len(self._dq)
             self._dq.clear()
+            self._recv.clear()
+            self._t0 = None
+            self._last_ts = None
+            self._lost = 0
             return n
 
     # ---- readers --------------------------------------------------------
@@ -80,13 +103,20 @@ class SampleStore:
             return [s.to_dict() for s in list(self._dq)[-n:]]
 
     def series(self, n: int = RECENT_POINTS) -> dict:
-        """Column arrays for the dashboard charts (last n samples)."""
-        rows = self.recent(n)
+        """Column arrays for the dashboard charts (last n samples).
+
+        `rel_ms` is the gateway receive clock (0-based, shared across devices) — use it as
+        the x-axis to compare two Nanos. `t` is the Nano's own timestamp_ms (per-device).
+        """
+        with self._lock:
+            samples = list(self._dq)[-n:]
+            recv = list(self._recv)[-n:]
         return {
-            "t": [r["timestamp_ms"] for r in rows],
-            "acc_norm": [r["acc_norm"] for r in rows],
-            "gyro_norm": [r["gyro_norm"] for r in rows],
-            "phase": [r["phase"] for r in rows],
+            "rel_ms": recv,
+            "t": [s.timestamp_ms for s in samples],
+            "acc_norm": [round(s.acc_norm, 4) for s in samples],
+            "gyro_norm": [round(s.gyro_norm, 4) for s in samples],
+            "phase": [s.phase for s in samples],
         }
 
     def status(self) -> dict:
@@ -100,6 +130,7 @@ class SampleStore:
                 "live": age is not None and age < 1.5,
                 "count": self._count,
                 "bad": self._bad,
+                "lost": self._lost,
                 "rate_hz": rate,
                 "buffered": len(self._dq),
                 "buffer_max": self._dq.maxlen,
