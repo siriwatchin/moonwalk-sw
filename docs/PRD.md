@@ -183,10 +183,10 @@ intelligence. They are linked by a wired UART.
   self-monitoring) and never says diagnosis, treatment, or **fall risk**. The MEDICAL
   CLAIM SAFETY disclaimer is inline on every Alert + a persistent dashboard footer,
   and is distinct from the Speaking Stick's assistive-safety disclosure.
-- **Scope: measure-and-trend, not diagnostic** (ADR-0001). Spatial metrics are
-  relative trends only (Werner et al. 2019: ~25–42% absolute error, but ICC ≈
-  0.72–0.76 for tracking change); temporal metrics are the headline figures (ICC
-  0.72–0.97).
+- **Scope: measure-and-trend, not diagnostic** (ADR-0001). Spatial metrics (stride,
+  velocity) are relative trends only — reliable for tracking change over time, not as
+  clinical absolutes; temporal metrics (cadence, rhythm) are the headline figures.
+  (Evidence base: `docs/research/gait-evidence-references.md`.)
 - **Two mode-specific sensing models, not one toggle** (ADR-0002).
 - **Handle Load does double duty** in Cane Mode: it is both the Weight-Bearing metric
   and the ZUPT stance anchor that bounds Distance Estimator drift.

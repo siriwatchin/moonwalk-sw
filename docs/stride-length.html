@@ -185,7 +185,7 @@ velocity = stride * cadence                # feeds the dashboard</div>
         is the best defence until the FSR arrives.</li>
       <li><b>L must be calibrated per user.</b> Error in L scales straight into stride
         error — that's why the app asks for stick length at setup.</li>
-      <li><b>Expect 6 % (Sijobert) to 25–42 % (Werner) absolute error.</b> Calibrate
+      <li><b>Expect meaningful absolute error from a single-IMU stride estimate.</b> Calibrate
         against the User's <i>own</i> baseline; never show clinical centimetres.
         This is ADR-0001 / ADR-0005 — wellness, not medicine.</li>
       <li><b>Dragging breaks it.</b> No plant ⇒ no ZUPT ⇒ runaway drift (Dang &amp; Suh
@@ -230,7 +230,7 @@ velocity = stride * cadence                # feeds the dashboard</div>
   </ul>
 
   <footer>
-    Moon Walk · Cane Mode Distance Estimator · See <code>docs/references.md</code>,
+    Moon Walk · Cane Mode Distance Estimator · See <code>docs/research/gait-evidence-references.md</code>,
     <code>docs/architecture.md</code>, ADR-0001 (measure-and-trend) and ADR-0002
     (dual-mode sensing). Stride length is a wellness trend, not a medical measurement.
   </footer>

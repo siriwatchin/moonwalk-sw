@@ -37,9 +37,8 @@ voice/vibration/LED. Try the dashboard: **https://moonwalkerscamper.netlify.app*
 The 2014 "Smart Walker" *replaced* the aid and streamed raw video to the cloud to
 navigate. Moon Walk **instruments the aid you own**, keeps the **intelligence and health
 data on-device**, and makes an **honest wellness claim** — no overclaim. Gait sensors on a
-walking aid track *change* reliably (temporal metrics ICC 0.72–0.97), so we lead with
-temporal numbers and show stride/velocity only as **relative trends**, never clinical
-absolutes.
+walking aid track *change* reliably, so we lead with robust temporal numbers (cadence,
+rhythm) and show stride/velocity only as **relative trends**, never clinical absolutes.
 
 ### Honest scope
 - Not a medical device — no diagnosis, treatment, disease/fall-risk prediction; a clinician,

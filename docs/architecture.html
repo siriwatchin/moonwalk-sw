@@ -263,7 +263,7 @@
   <div class="cards">
     <div class="card"><h4>Mode &amp; stick length L</h4><p>Cane vs Walker is set manually at setup (ADR-0002) and selects the Distance Estimator's model. Stick length L is the geometric scale for every spatial metric — <code>L·sin(θ)</code> is meaningless without it.</p></div>
     <div class="card warn"><h4>FSR grip threshold — N/A in this build</h4><p>The designed per-user FSR load threshold (PRD US-4) doesn't apply yet — there's no FSR. Its stand-in is the IMU motion/stillness threshold that decides "planted vs swinging". Re-enable the load calibration when an FSR is added.</p></div>
-    <div class="card"><h4>Continuous Baseline → Drift</h4><p>The device learns this user's own normal on-device. Only <b>sustained</b> Drift raises an Alert; a single odd walk must not. Because trends are user-vs-self, constant stride underestimation cancels for change-detection (ICC 0.72–0.76).</p></div>
+    <div class="card"><h4>Continuous Baseline → Drift</h4><p>The device learns this user's own normal on-device. Only <b>sustained</b> Drift raises an Alert; a single odd walk must not. Because trends are user-vs-self, any constant stride underestimation cancels out for change-detection.</p></div>
   </div>
 
   <!-- ============ 5. HARDWARE NOTE ============ -->

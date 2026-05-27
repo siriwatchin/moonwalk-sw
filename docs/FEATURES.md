@@ -83,7 +83,7 @@ below derives from those. The organising principle:
 > and relative lean/loading (per-user) — built from a stick, about the stick.
 > It does not give ground forces or leg-segment kinetics.**
 
-### Tier 1 — Reliable headline metrics (temporal) · ICC 0.72–0.97
+### Tier 1 — Reliable headline metrics (temporal)
 Pure functions of Stick Cycle detection. Lead with these.
 
 | Metric | Source | Notes |
@@ -96,7 +96,7 @@ Pure functions of Stick Cycle detection. Lead with these.
 | Cycle count | Count of plant events | Honest "number of stance" = count of stick plants |
 | Asymmetry | L/R timing (cane) or dual-grip load (walker) | Direct limp signal |
 
-### Tier 2 — Trend-only metrics (spatial) · ICC 0.72–0.76, ~25–42% absolute error
+### Tier 2 — Trend-only metrics (spatial)
 Real and useful, but **never presented as clinical absolutes** — change-over-time only.
 
 | Metric | Source | Notes |

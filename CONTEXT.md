@@ -80,13 +80,15 @@ Requires a one-time **stick-length calibration**.
 
 **Stride Length** / **Gait Velocity**:
 Derived via the **Pendulum Model** (cane) / odometry (walker). **Spatial metrics are
-trend-only**: walking-aid sensors systematically underestimate them (Werner et al.
-2019: ~25–42% error) but track *change* reliably (ICC ≈ 0.72–0.76). Never present
-as clinical absolutes; require per-user calibration.
+trend-only**: a single aid-mounted sensor estimates stride/velocity reliably enough to
+track *change over time* but not as clinical absolutes, so we never present them as
+absolute values and they require per-user calibration. (Aid-assisted single-sensor gait
+validity: Werner et al. 2020, *Sensors*.)
 
 **Temporal metrics** (cadence, stance/swing, **Stick Duty Factor**, asymmetry) are
-the robust, headline numbers (ICC 0.72–0.97). Lead with these; spatial metrics are
-secondary trends.
+the robust, headline numbers — cadence in particular is reliably recovered from a single
+IMU (Salarian et al. 2004; Werner et al. 2023). Lead with these; spatial metrics are
+secondary trends. (See `docs/research/gait-evidence-references.md`.)
 
 **Alert**:
 An in-app wellness nudge raised when tracked metrics drift (e.g. "your walking has

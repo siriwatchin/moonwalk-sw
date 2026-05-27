@@ -84,7 +84,33 @@
 
 ---
 
-## 3. BibTeX (Strong-rated papers)
+## 3. Additional reading — stride-length estimation & aid-mounted sensing
+
+Found via `s2cli`, ranked by relevance to our setup (a single IMU on a cane, gyro-based
+pendulum stride estimation). These are *relevance-ranked background*, not individually run
+through the Strong/Partial verification above. (Consolidated here from the former
+`docs/references.md`.)
+
+**Aid-mounted IMU work (closest to our setup)**
+- Gorordo Fernandez I, Ahmad SA, Wada C. "Inertial Sensor-Based Instrumented Cane for Real-Time Walking Cane Kinematics Estimation." *Sensors*, 2020, 20(17):4675. https://doi.org/10.3390/s20174675
+- Phinyomark A, Larracy R, Gill S, Scheme EJ. "Variability-based assessment of assisted gait using a multi-sensor instrumented cane." *Comput. Biol. Med.*, 2025. https://doi.org/10.1016/j.compbiomed.2025.110796
+- Mekki F, Borghetti M, Sardini E, Serpelloni M. "Wireless instrumented cane for walking monitoring in Parkinson patients." *IEEE MeMeA*, 2017. https://doi.org/10.1109/MeMeA.2017.7985912
+- Inthasuth T. "Investigating an IoT-Integrated Cane System for Accurate Gait Analysis and Fall Detection." *Przegląd Elektrotechniczny*, 2024. https://doi.org/10.15199/48.2024.03.40
+- Ejaz N, et al. "Examining Gait Characteristics in People with Osteoporosis Utilizing a Non-Wheeled Smart Walker." *Applied Sciences*, 2023, 13(21):12017. https://doi.org/10.3390/app132112017
+
+**Aid-assisted gait validity / reliability (the "trend-only" basis)**
+- **Werner C, Heldmann P, Hummel S, Bauknecht L, Bauer JM, Hauer K.** "Concurrent Validity, Test-Retest Reliability, and Sensitivity to Change of a Single Body-Fixed Sensor for Gait Analysis during Rollator-Assisted Walking in Acute Geriatric Patients." *Sensors*, 2020, 20(17):4866. https://doi.org/10.3390/s20174866 — **the real "Werner" paper.** It supersedes the incorrect "Werner et al. 2019, *Clin Rehabil*" citation that was in our docs, and it found *good-to-excellent* validity (ICC 0.87–0.99) — so the previously-quoted "~25–42% error / ICC 0.72–0.76 / 0.72–0.97" figures were unsourced and have been removed from CONTEXT/PRD/FEATURES/ADR-0001/PROPOSAL/mockups.
+- Schülein S, et al. "Instrumented gait analysis: a measure of gait improvement by a wheeled walker in hospitalized geriatric patients." *J. NeuroEng. Rehabil.*, 2017.
+- Resch S, et al. "Smart Walking Aids with Sensor Technology for Gait Support and Health Monitoring: A Scoping Review." *Technologies*, 2025, 13(8):346. https://doi.org/10.3390/technologies13080346
+
+**Single-IMU stride-length algorithms (body-worn — method references)**
+- Sijobert B, et al. "Implementation and Validation of a Stride Length Estimation Algorithm Using a Single Basic Inertial Sensor." 2015.
+- Brahms CM, et al. "Stride length determination during overground running using a single foot-mounted IMU." *J. Biomech.*, 2018.
+- Wang Y, et al. "Adaptive Threshold for Zero-Velocity Detector in ZUPT-Aided Pedestrian Inertial Navigation." *IEEE Sensors Lett.*, 2019.
+
+*Gap: no published paper does cane-mounted, gyro-based pendulum stride estimation — Moon Walk's Distance Estimator is a novel synthesis of pendulum geometry + ZUPT (Wang 2019) + the trend-only posture (Werner 2020).*
+
+## 4. BibTeX (Strong-rated papers)
 
 ```bibtex
 @article{studenski2011gait,
