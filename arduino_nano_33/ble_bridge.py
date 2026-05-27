@@ -27,8 +27,7 @@ import time
 
 import websockets
 from bleak import BleakClient, BleakScanner
-
-from imu_payload import CHAR_UUID, DEVICE_NAME, parse_payload, format_human
+from imu_payload import CHAR_UUID, DEVICE_NAME, parse_payload
 
 # ---- WebSocket server config --------------------------------------------
 WS_HOST = "0.0.0.0"   # bind on all interfaces so remote clients can connect

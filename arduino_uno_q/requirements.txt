@@ -9,4 +9,7 @@
 #   python3 -m pip install -r requirements.txt  # if pip is available
 #
 # Mock mode and bridge-transport dashboard mode need none of this.
-bleak
+#
+# Version pin is a tested floor (compatible-release). Confirm/refresh against the board with:
+#   python3 -m pip freeze | grep -i bleak
+bleak~=0.22

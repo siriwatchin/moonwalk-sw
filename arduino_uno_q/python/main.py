@@ -24,10 +24,10 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from parser import parse_line
 
 import config
 from config import CHAR_UUID, DEVICE_NAME, INTERVAL_MS, SERVICE_UUID
-from parser import parse_line
 
 # Expected over-the-air payload length (CSV ~60-70 B). The ATT MTU must exceed this or
 # notifications get truncated and every line fails to parse. (MTU usable bytes = mtu - 3.)

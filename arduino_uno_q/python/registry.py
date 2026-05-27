@@ -8,7 +8,7 @@ SourceManager owns the sources/workers, the registry owns the per-device buffers
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from config import BUFFER_MAXLEN
 from store import SampleStore

@@ -38,25 +38,28 @@ BRIDGE_BLE_ADDRESS = None     # the bridge's BLE target: None -> first NanoIMU b
 REST_BRIDGE_URL = "http://172.17.0.1:8787"
 REST_POLL_INTERVAL_S = 0.3    # container poll cadence (spec's 250-500 ms band)
 
-# ---- BLE contract (must match the Nano sender) -------------------------
-DEVICE_NAME = "NanoIMU"
-SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214"
-CHAR_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214"
+# ---- BLE contract (single source of truth) -----------------------------
+# Generated from protocol/ble_contract.json by protocol/gen_contract.py — DO NOT edit those
+# values here. Re-export so downstream modules keep importing them from `config`.
+# `INTERVAL_MS` is the local alias for the contract's SEND_INTERVAL_MS.
+from ble_contract import (  # noqa: E402,F401
+    ACC_NEAR_G_THRESHOLD,
+    CHAR_UUID,
+    DEVICE_NAME,
+    FIELD_COUNT,
+    GRAVITY,
+    GYRO_SWING_THRESHOLD,
+    GYRO_ZERO_THRESHOLD,
+    PAYLOAD_TAG,
+    PHASE_LABELS,
+    SERVICE_UUID,
+)
+from ble_contract import SEND_INTERVAL_MS as INTERVAL_MS  # noqa: E402,F401
 
-# Payload: IMU,timestamp_ms,ax,ay,az,gx,gy,gz,acc_norm,gyro_norm,phase
-PAYLOAD_TAG = "IMU"
-FIELD_COUNT = 11
-
-GRAVITY = 9.80665
-INTERVAL_MS = 50
-
-# ---- Walking-phase codes -----------------------------------------------
-PHASE_LABELS = {
-    0: "UNKNOWN",
-    1: "STATIONARY_OR_ZERO_VELOCITY",
-    2: "GROUND_CONTACT_WITH_ROTATION",
-    3: "SWING_OR_ON_AIR",
-}
+# Data-stall watchdog: force a BLE reconnect if no notification arrives for this long even
+# though the link still looks connected (silent stall). At 50 ms notify (20 Hz), 3 s ≈ 60
+# missed samples — unambiguously dead, not just jitter. (Local behaviour, not the wire contract.)
+BLE_STALL_TIMEOUT_S = 3.0
 
 # ---- Store / UI ---------------------------------------------------------
 BUFFER_MAXLEN = 600     # ~30 s of history at 20 Hz

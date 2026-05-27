@@ -36,11 +36,11 @@ for _cand in (os.environ.get("MOONWALK_PY_DIR"),
         sys.path.insert(0, os.path.abspath(_cand))
         break
 
-import config                                  # noqa: E402
-from ble_receiver import BleNanoReceiver       # noqa: E402
-from parser import parse_line                  # noqa: E402
+from parser import parse_line  # noqa: E402
 
-from fastapi import FastAPI                     # noqa: E402
+import config  # noqa: E402
+from ble_receiver import BleNanoReceiver  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
 
 BRIDGE_REST_PORT = 8787
 _BUFFER_MAXLEN = 500       # rolling window of recent samples served by /samples

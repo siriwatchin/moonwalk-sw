@@ -15,10 +15,11 @@ import json
 import threading
 import urllib.error
 import urllib.request
-from typing import Iterator
+from collections.abc import Iterator
 
-_HTTP_TIMEOUT_S = 3.0   # per-request timeout before the bridge counts as unreachable
-_RETRY_S = 2.0          # backoff after an error (mirrors BridgeNanoSource)
+_HTTP_TIMEOUT_S = 3.0    # per-request timeout before the bridge counts as unreachable
+_BACKOFF_START_S = 1.0   # error backoff grows 1→2→4…→cap, resets on the next good poll
+_BACKOFF_MAX_S = 30.0
 
 
 class RestNanoSource:
@@ -46,14 +47,17 @@ class RestNanoSource:
 
     def lines(self) -> Iterator[str]:
         last_seq = 0
+        backoff = _BACKOFF_START_S
         while not self._stop.is_set():
             try:
                 records = self._get(f"{self._base}/samples?since={last_seq}")
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 self._set_status(f"disconnected / reconnecting ({exc})")
-                if self._stop.wait(_RETRY_S):
+                if self._stop.wait(backoff):
                     break
+                backoff = min(backoff * 2, _BACKOFF_MAX_S)
                 continue
+            backoff = _BACKOFF_START_S   # good poll → reset backoff
             self._set_status("connected")
             for rec in records or []:
                 last_seq = max(last_seq, rec.get("seq", 0))

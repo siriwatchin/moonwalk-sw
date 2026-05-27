@@ -24,7 +24,6 @@ import sys
 import time
 
 from bleak import BleakClient, BleakScanner
-
 from imu_payload import CHAR_UUID, DEVICE_NAME, PHASE_LABELS, parse_payload
 
 # Acceptance window for the effective sample rate (target 20 Hz).

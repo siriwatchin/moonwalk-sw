@@ -1,4 +1,7 @@
 # UNO Q Linux-side receivers/bridge dependencies.
 #   pip install -r requirements.txt
-bleak
-websockets
+#
+# Version pins are tested floors (compatible-release). Confirm/refresh against the board with:
+#   python3 -m pip freeze | grep -iE 'bleak|websockets'
+bleak~=0.22
+websockets~=13.0

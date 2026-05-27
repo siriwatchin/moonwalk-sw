@@ -1,0 +1,12 @@
+# Shared linter/formatter config for all Python subprojects in this repo.
+# Run manually:  ruff check .   |   ruff format .
+# (No CI wired yet — config-only convenience.)
+line-length = 100
+target-version = "py39"
+
+# Vendored / generated assets and virtualenvs are not ours to lint.
+extend-exclude = ["*.min.js", "assets/", ".venv", "**/__pycache__"]
+
+[lint]
+# E/F = pycodestyle+pyflakes, I = isort, UP = pyupgrade, B = bugbear.
+select = ["E", "F", "I", "UP", "B"]

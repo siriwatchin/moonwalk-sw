@@ -5,14 +5,21 @@
 // the browser polls /api/* which return JSON keyed by slot ("A"/"B").
 
 const SLOTS = ["A", "B"];
-const PHASE_NAMES = {
-  0: "UNKNOWN", 1: "STATIONARY / ZERO-VEL",
-  2: "GROUND CONTACT + ROTATION", 3: "SWING / ON-AIR",
-};
-const PHASE_BG = { 0: "bg-phase0", 1: "bg-phase1", 2: "bg-phase2", 3: "bg-phase3" };
+
+// The nine realtime line charts: canvas key in els -> {field in /api/series, stroke color}.
+// accel axes share a blue family, gyro axes an orange family; phase is drawn separately.
+const CHANNELS = [
+  { c: "cax", f: "ax", color: "#58a6ff" },
+  { c: "cay", f: "ay", color: "#79c0ff" },
+  { c: "caz", f: "az", color: "#388bfd" },
+  { c: "cgx", f: "gx", color: "#f0883e" },
+  { c: "cgy", f: "gy", color: "#ffa657" },
+  { c: "cgz", f: "gz", color: "#db6d28" },
+  { c: "cacc", f: "acc_norm", color: "#58a6ff", baseline: 9.80665 },
+  { c: "cgyro", f: "gyro_norm", color: "#f0883e" },
+];
 
 const $ = (id) => document.getElementById(id);
-const fmt = (v, d = 3) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
 const api = (path, opts) => fetch(`/api${path}`, { cache: "no-store", ...(opts || {}) });
 
 // Live charts plot value-vs-TIME on a fixed scrolling window: the newest sample sits at the
@@ -53,49 +60,58 @@ function slotValueFromConfig(cfg) {
 const panels = {};         // slot -> {root, els}
 let bleDevices = [];        // [{name,address}] for the dropdowns (scanned ∪ assigned)
 let lastOptSig = null;      // rebuild options only when the BLE list changes
+let viewSlot = "A";         // only one slot is shown full-width at a time (A or B)
+
+// Show one slot full-width; hide the other (its source keeps running in the backend).
+// Skipping the hidden panel's 9-canvas redraw is also what keeps the UNO Q CPU happy.
+function setViewSlot(slot) {
+  viewSlot = slot;
+  for (const s of SLOTS) panels[s].root.style.display = (s === slot) ? "" : "none";
+  for (const btn of document.querySelectorAll(".slot-tab")) {
+    const on = btn.dataset.slot === slot;
+    btn.className = "slot-tab px-3 py-1 rounded-lg text-[13px] font-semibold border border-[#30363d] " +
+      (on ? "bg-[#21262d]" : "text-[#8b949e]");
+  }
+  // The panel was hidden (display:none → 0px), so its charts need a resize before redraw.
+  const p = panels[slot];
+  if (p) for (const k in p.charts) p.charts[k].resize();
+  pollData();   // redraw the now-visible slot immediately (don't wait for the next tick)
+}
 
 function buildPanel(slot) {
   const root = document.createElement("section");
   root.className = "bg-[#161b22] border border-[#21262d] rounded-xl p-4";
+  // One <label + canvas> block per channel. `top` starts a new visual group (border + gap).
+  // Chart.js sizes the canvas to its parent, so the height lives on the wrapper div.
+  const chart = (key, title, top) =>
+    `<div class="text-[11px] uppercase tracking-wider text-[#8b949e] mt-2${
+      top ? " border-t border-[#21262d] pt-3" : ""}">${title}</div>
+     <div class="relative h-24"><canvas data-c${key}></canvas></div>`;
   root.innerHTML = `
     <div class="flex items-center gap-2 mb-2">
       <span class="font-bold text-[15px]">Slot ${slot}</span>
       <span class="text-xs text-[#8b949e]" data-label>—</span>
       <span class="flex-1"></span>
-      <span class="phase inline-block px-3 py-1 rounded-lg font-bold text-[13px] bg-phase0" data-phase>—</span>
+      <span class="text-xs font-semibold text-[#8b949e]" data-live>—</span>
     </div>
     <select data-sel class="bg-[#0e1116] border border-[#30363d] rounded-lg px-2 py-1.5 text-[13px] w-full mb-2"></select>
-    <div class="text-[11px] text-[#8b949e] mb-3" data-meta>no source selected</div>
-    <div class="flex gap-4 text-xs text-[#8b949e] mb-3">
-      <div>acc_norm <span class="text-[22px] font-bold tabular-nums text-[#e6edf3]" data-accN>—</span></div>
-      <div>gyro_norm <span class="text-[22px] font-bold tabular-nums text-[#e6edf3]" data-gyroN>—</span></div>
-    </div>
-    <div class="grid grid-cols-2 gap-3 text-[13px] tabular-nums mb-3">
-      <div class="grid grid-cols-[auto_1fr] gap-x-2">
-        <span class="text-[#8b949e]">ax</span><span class="text-right" data-ax>—</span>
-        <span class="text-[#8b949e]">ay</span><span class="text-right" data-ay>—</span>
-        <span class="text-[#8b949e]">az</span><span class="text-right" data-az>—</span>
-      </div>
-      <div class="grid grid-cols-[auto_1fr] gap-x-2">
-        <span class="text-[#8b949e]">gx</span><span class="text-right" data-gx>—</span>
-        <span class="text-[#8b949e]">gy</span><span class="text-right" data-gy>—</span>
-        <span class="text-[#8b949e]">gz</span><span class="text-right" data-gz>—</span>
-      </div>
-    </div>
-    <div class="text-[11px] uppercase tracking-wider text-[#8b949e] mt-2">acc_norm</div>
-    <canvas data-cacc class="w-full h-20 block"></canvas>
-    <div class="text-[11px] uppercase tracking-wider text-[#8b949e] mt-2">gyro_norm</div>
-    <canvas data-cgyro class="w-full h-20 block"></canvas>
-    <div class="text-[11px] uppercase tracking-wider text-[#8b949e] mt-2">phase</div>
-    <canvas data-cphase class="w-full h-16 block"></canvas>
+    <div class="text-[11px] text-[#8b949e] mb-2" data-meta>no source selected</div>
+    ${chart("ax", "ax (m/s²)", true)}
+    ${chart("ay", "ay (m/s²)")}
+    ${chart("az", "az (m/s²)")}
+    ${chart("gx", "gx (dps)", true)}
+    ${chart("gy", "gy (dps)")}
+    ${chart("gz", "gz (dps)")}
+    ${chart("acc", "acc_norm (m/s²)", true)}
+    ${chart("gyro", "gyro_norm (dps)")}
+    ${chart("phase", "phase", true)}
   `;
   $("panels").appendChild(root);
   const q = (sel) => root.querySelector(sel);
   const els = {
-    sel: q("[data-sel]"), label: q("[data-label]"), phase: q("[data-phase]"), meta: q("[data-meta]"),
-    accN: q("[data-accN]"), gyroN: q("[data-gyroN]"),
-    ax: q("[data-ax]"), ay: q("[data-ay]"), az: q("[data-az]"),
-    gx: q("[data-gx]"), gy: q("[data-gy]"), gz: q("[data-gz]"),
+    sel: q("[data-sel]"), label: q("[data-label]"), live: q("[data-live]"), meta: q("[data-meta]"),
+    cax: q("[data-cax]"), cay: q("[data-cay]"), caz: q("[data-caz]"),
+    cgx: q("[data-cgx]"), cgy: q("[data-cgy]"), cgz: q("[data-cgz]"),
     cacc: q("[data-cacc]"), cgyro: q("[data-cgyro]"), cphase: q("[data-cphase]"),
   };
   els.sel.onchange = async () => {
@@ -105,7 +121,11 @@ function buildPanel(slot) {
     if (res) $("srcHint").textContent = `slot ${slot} set`;
     pollStatus();
   };
-  panels[slot] = { root, els };
+  // One Chart.js chart per channel (built once; updated in place on each poll).
+  const charts = {};
+  for (const ch of CHANNELS) charts[ch.c] = makeLineChart(els[ch.c], ch.color, ch.baseline);
+  charts.cphase = makePhaseChart(els.cphase);
+  panels[slot] = { root, els, charts };
 }
 
 function renderSlotOptions(sel) {
@@ -123,119 +143,103 @@ function renderAllOptions() {
 }
 
 function clearPanel(slot) {
-  const e = panels[slot].els;
-  e.label.textContent = "(no source)";
-  for (const k of ["ax", "ay", "az", "gx", "gy", "gz"]) e[k].textContent = "—";
-  e.accN.textContent = "—"; e.gyroN.textContent = "—";
-  e.phase.textContent = "—";
-  e.phase.className = "phase inline-block px-3 py-1 rounded-lg font-bold text-[13px] bg-phase0";
-  lineChart(e.cacc, [], [], "#58a6ff", 9.80665);
-  lineChart(e.cgyro, [], [], "#f0883e");
-  stepChart(e.cphase, [], []);
+  const { els, charts } = panels[slot];
+  els.label.textContent = "(no source)";
+  els.live.textContent = "—";
+  for (const ch of CHANNELS) updateChart(charts[ch.c], [], [], ch.baseline);
+  updateChart(charts.cphase, [], []);
 }
 
-// ---- canvas charts (no external libs) ----
-function setupCanvas(canvas) {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  canvas.width = w * dpr; canvas.height = h * dpr;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
-  return { ctx, w, h };
+// ---- Chart.js charts (vendored offline) ----
+// Shared dark theme. x is a linear axis over the Nano timestamp_ms; we slide its [min,max]
+// each poll to make the 10 s window scroll right→left, and label ticks relative to "now" (0s).
+function baseOptions() {
+  return {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    parsing: false,        // data is pre-shaped as {x, y}
+    normalized: true,
+    scales: {
+      x: {
+        type: "linear",
+        grid: { color: "#21262d" },
+        border: { display: false },
+        ticks: {
+          color: "#6e7681", font: { size: 9 }, maxRotation: 0,
+          autoSkip: true, maxTicksLimit: 6, stepSize: 2000,
+          callback(v) { return Math.round((v - this.chart.scales.x.max) / 1000) + "s"; },
+        },
+      },
+      y: {
+        grid: { color: "#21262d" },
+        border: { display: false },
+        ticks: { color: "#6e7681", font: { size: 9 }, maxTicksLimit: 4 },
+      },
+    },
+    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+  };
 }
 
-// Map a timestamp (ms) to a pixel x within the [maxT - WINDOW_MS, maxT] scrolling window.
-function timeMapX(ts, w) {
+// A scrolling line chart. `baseline` (optional) draws a dashed reference line (e.g. gravity).
+function makeLineChart(canvas, color, baseline) {
+  const datasets = [{
+    data: [], borderColor: color, borderWidth: 1.5, pointRadius: 0,
+    tension: 0, spanGaps: GAP_MS, fill: false,
+  }];
+  if (baseline != null) {
+    datasets.push({
+      data: [], borderColor: "#30363d", borderWidth: 1,
+      borderDash: [4, 4], pointRadius: 0, spanGaps: true,
+    });
+  }
+  return new Chart(canvas, { type: "line", data: { datasets }, options: baseOptions() });
+}
+
+// The phase chart: a stepped line locked to the four phase levels (0..3).
+function makePhaseChart(canvas) {
+  const o = baseOptions();
+  o.scales.y.min = -0.3; o.scales.y.max = 3.3;
+  o.scales.y.ticks = {
+    color: "#6e7681", font: { size: 9 }, stepSize: 1,
+    callback: (v) => ([0, 1, 2, 3].includes(v) ? v : ""),
+  };
+  return new Chart(canvas, {
+    type: "line",
+    data: { datasets: [{ data: [], borderColor: "#a371f7", borderWidth: 1.5, pointRadius: 0, stepped: true, spanGaps: GAP_MS }] },
+    options: o,
+  });
+}
+
+// Push (ts, data) into a chart and slide the 10 s window to end at the newest sample.
+function updateChart(chart, ts, data, baseline) {
+  const pts = new Array(data.length);
+  for (let i = 0; i < data.length; i++) pts[i] = { x: ts[i], y: data[i] };
+  chart.data.datasets[0].data = pts;
   const maxT = ts.length ? ts[ts.length - 1] : 0;
-  const left = maxT - WINDOW_MS;
-  return (t) => ((t - left) / WINDOW_MS) * w;
-}
-
-// Vertical gridline every 2 s + "-Ns / 0s" edge labels (the realtime time axis).
-function drawTimeGrid(ctx, w, h, ts) {
-  if (!ts || !ts.length) return;
-  const maxT = ts[ts.length - 1], X = timeMapX(ts, w);
-  ctx.strokeStyle = "#21262d"; ctx.lineWidth = 1;
-  for (let s = 0; s <= WINDOW_MS / 1000; s += 2) {
-    const px = X(maxT - s * 1000);
-    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+  chart.options.scales.x.min = maxT - WINDOW_MS;
+  chart.options.scales.x.max = maxT;
+  if (baseline != null && chart.data.datasets[1]) {
+    chart.data.datasets[1].data = ts.length
+      ? [{ x: maxT - WINDOW_MS, y: baseline }, { x: maxT, y: baseline }] : [];
   }
-  ctx.fillStyle = "#6e7681"; ctx.font = "9px ui-monospace, monospace";
-  ctx.textAlign = "left"; ctx.fillText("-" + (WINDOW_MS / 1000) + "s", 2, h - 2);
-  ctx.textAlign = "right"; ctx.fillText("0s", w - 2, h - 2); ctx.textAlign = "left";
-}
-
-// Stroke a polyline over (ts, data), lifting the pen across time gaps > GAP_MS.
-function strokeOverTime(ctx, X, y, ts, data) {
-  ctx.beginPath();
-  let pen = false;
-  for (let i = 0; i < data.length; i++) {
-    const px = X(ts[i]), py = y(data[i]);
-    if (!pen || ts[i] - ts[i - 1] > GAP_MS) { ctx.moveTo(px, py); pen = true; }
-    else ctx.lineTo(px, py);
-  }
-  ctx.stroke();
-}
-
-function lineChart(canvas, ts, data, color, baseline = null) {
-  const { ctx, w, h } = setupCanvas(canvas);
-  if (!data || data.length < 2) return;
-  let lo = Math.min(...data), hi = Math.max(...data);
-  if (baseline !== null) { lo = Math.min(lo, baseline); hi = Math.max(hi, baseline); }
-  if (hi - lo < 1e-6) { hi += 1; lo -= 1; }
-  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
-  const X = timeMapX(ts, w), y = (v) => h - ((v - lo) / (hi - lo)) * h;
-  drawTimeGrid(ctx, w, h, ts);
-  if (baseline !== null) {
-    ctx.strokeStyle = "#30363d"; ctx.setLineDash([4, 4]); ctx.beginPath();
-    ctx.moveTo(0, y(baseline)); ctx.lineTo(w, y(baseline)); ctx.stroke(); ctx.setLineDash([]);
-  }
-  ctx.strokeStyle = color; ctx.lineWidth = 2;
-  strokeOverTime(ctx, X, y, ts, data);
-}
-function stepChart(canvas, ts, data) {
-  const { ctx, w, h } = setupCanvas(canvas);
-  if (!data || data.length < 2) return;
-  const lo = -0.3, hi = 3.3;
-  const X = timeMapX(ts, w), y = (v) => h - ((v - lo) / (hi - lo)) * h;
-  drawTimeGrid(ctx, w, h, ts);
-  ctx.strokeStyle = "#21262d"; ctx.lineWidth = 1;
-  for (const lvl of [0, 1, 2, 3]) { ctx.beginPath(); ctx.moveTo(0, y(lvl)); ctx.lineTo(w, y(lvl)); ctx.stroke(); }
-  ctx.strokeStyle = "#a371f7"; ctx.lineWidth = 2; ctx.beginPath();
-  let pen = false;
-  for (let i = 0; i < data.length; i++) {
-    const px = X(ts[i]);
-    if (!pen || ts[i] - ts[i - 1] > GAP_MS) { ctx.moveTo(px, y(data[i])); pen = true; continue; }
-    ctx.lineTo(px, y(data[i - 1])); ctx.lineTo(px, y(data[i]));   // step: hold then rise
-  }
-  ctx.stroke();
+  chart.update("none");
 }
 
 // ---- polling ----
 async function pollData() {
   try {
-    const [series, latest] = await Promise.all([
-      api("/series").then((r) => r.json()),
-      api("/latest").then((r) => r.json()),
-    ]);
-    const sdev = series.devices || {}, ldev = latest.devices || {};
+    const series = await api("/series").then((r) => r.json());
+    const sdev = series.devices || {};
     for (const slot of SLOTS) {
+      if (slot !== viewSlot) continue;   // only the visible slot needs its charts redrawn
       const s = sdev[slot];
       if (!s) { clearPanel(slot); continue; }
-      const e = panels[slot].els;
-      e.label.textContent = s.label || slot;
+      const { els, charts } = panels[slot];
+      els.label.textContent = s.label || slot;
       const ts = s.t || [];   // Nano timestamp_ms per sample — the chart x-axis (time)
-      lineChart(e.cacc, ts, s.acc_norm, "#58a6ff", 9.80665);
-      lineChart(e.cgyro, ts, s.gyro_norm, "#f0883e");
-      stepChart(e.cphase, ts, s.phase);
-      const L = ldev[slot];
-      if (L) {
-        for (const k of ["ax", "ay", "az", "gx", "gy", "gz"]) e[k].textContent = fmt(L[k]);
-        e.accN.textContent = fmt(L.acc_norm, 2);
-        e.gyroN.textContent = fmt(L.gyro_norm, 2);
-        e.phase.textContent = PHASE_NAMES[L.phase] ?? "—";
-        e.phase.className = "phase inline-block px-3 py-1 rounded-lg font-bold text-[13px] " + (PHASE_BG[L.phase] || PHASE_BG[0]);
-      }
+      for (const ch of CHANNELS) updateChart(charts[ch.c], ts, s[ch.f] || [], ch.baseline);
+      updateChart(charts.cphase, ts, s.phase || []);
     }
   } catch (_) { /* transient */ }
 }
@@ -272,8 +276,15 @@ async function pollStatus() {
       if (e.sel.value !== want) e.sel.value = want;
       const ds = dstat[slot];
       e.meta.textContent = ds
-        ? `${ds.source_status || ""} · ${ds.rate_hz ?? 0}Hz · bad:${ds.bad || 0} · lost:${ds.lost || 0}`
+        ? `${ds.source_status || ""} · ${ds.rate_hz ?? 0}Hz · bad:${ds.bad || 0} · lost:${ds.lost || 0} · drop:${ds.dropped || 0} · buf:${ds.buffered ?? 0}/${ds.buffer_max ?? 0}`
         : (c.kind === "none" ? "no source selected" : (c.status || ""));
+      if (ds && ds.live) {
+        e.live.textContent = "● LIVE";
+        e.live.className = "text-xs font-semibold text-[#3fb950]";
+      } else {
+        e.live.textContent = c.kind === "none" ? "—" : "○ offline";
+        e.live.className = "text-xs font-semibold text-[#8b949e]";
+      }
     }
   } catch (_) {
     setBadge("server unreachable", "down");
@@ -320,6 +331,8 @@ $("btnClear").onclick = () => postJSON("/clear", {});
 // ---- boot ----
 for (const s of SLOTS) buildPanel(s);
 renderAllOptions();
+for (const btn of document.querySelectorAll(".slot-tab")) btn.onclick = () => setViewSlot(btn.dataset.slot);
+setViewSlot("A");   // default to slot A; hides B
 pollData();
 pollStatus();
 setInterval(pollData, 300);

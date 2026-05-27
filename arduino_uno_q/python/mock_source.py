@@ -9,21 +9,29 @@ from __future__ import annotations
 import math
 import random
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Optional
 
-from config import GRAVITY, INTERVAL_MS, PAYLOAD_TAG
+from config import (
+    ACC_NEAR_G_THRESHOLD,
+    GRAVITY,
+    GYRO_SWING_THRESHOLD,
+    GYRO_ZERO_THRESHOLD,
+    INTERVAL_MS,
+    PAYLOAD_TAG,
+)
 
 
 def _classify_phase(acc_norm: float, gyro_norm: float) -> int:
-    """Same rules as the firmware (kept local so the mock is self-contained)."""
+    """Same rules as the firmware — thresholds come from the shared BLE contract."""
     acc_delta = abs(acc_norm - GRAVITY)
-    near_g = acc_delta < 0.30
-    if near_g and gyro_norm < 2.0:
+    near_g = acc_delta < ACC_NEAR_G_THRESHOLD
+    if near_g and gyro_norm < GYRO_ZERO_THRESHOLD:
         return 1
-    if near_g and 2.0 <= gyro_norm < 25.0:
+    if near_g and GYRO_ZERO_THRESHOLD <= gyro_norm < GYRO_SWING_THRESHOLD:
         return 2
-    if acc_delta >= 0.30 or gyro_norm >= 25.0:
+    if acc_delta >= ACC_NEAR_G_THRESHOLD or gyro_norm >= GYRO_SWING_THRESHOLD:
         return 3
     return 0
 

@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import threading
 import time
+from parser import parse_line
 
 import config
 from config import DEVICE_NAME
-from parser import parse_line
 from registry import DeviceRegistry
 
 SLOTS = ("A", "B")
@@ -166,6 +166,9 @@ class SourceManager:
             if dev is None:        # removed while running
                 break
             dev.store.set_status(source.status())
+            drop = getattr(source, "dropped", None)   # only the live BLE source sheds on full queue
+            if drop is not None:
+                dev.store.set_dropped(drop())
             sample = parse_line(raw)
             if sample is None:
                 dev.store.note_bad()

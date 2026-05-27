@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import socket
 import threading
-from typing import Iterator
+import time
+from collections.abc import Iterator
 
 _CONNECT_TIMEOUT_S = 5.0   # TCP connect attempt before retrying
-_RETRY_S = 2.0             # backoff between reconnects (mirrors BleNanoReceiver)
+_BACKOFF_START_S = 1.0     # reconnect backoff grows 1→2→4…→cap, resets after a real session
+_BACKOFF_MAX_S = 30.0
+_SESSION_OK_S = 10.0       # a session lasting this long counts as "connected" → reset backoff
 
 
 class BridgeNanoSource:
@@ -54,6 +57,7 @@ class BridgeNanoSource:
 
     def lines(self) -> Iterator[str]:
         target = f"{self._host}:{self._port}"
+        backoff = _BACKOFF_START_S
         while not self._stop.is_set():
             self._set_status(f"connecting {target}")
             try:
@@ -61,10 +65,12 @@ class BridgeNanoSource:
                                                 timeout=_CONNECT_TIMEOUT_S)
             except OSError as exc:
                 self._set_status(f"disconnected / reconnecting ({exc})")
-                if self._stop.wait(_RETRY_S):
+                if self._stop.wait(backoff):
                     break
+                backoff = min(backoff * 2, _BACKOFF_MAX_S)
                 continue
 
+            connected_at = time.monotonic()
             sock.settimeout(None)   # block on reads; stop() closes the socket to unblock
             with self._lock:
                 self._sock = sock
@@ -96,8 +102,12 @@ class BridgeNanoSource:
 
             if self._stop.is_set():
                 break
+            # Reset backoff only if the session actually lasted (a real connection).
+            if time.monotonic() - connected_at >= _SESSION_OK_S:
+                backoff = _BACKOFF_START_S
             self._set_status("disconnected / reconnecting")
-            if self._stop.wait(_RETRY_S):
+            if self._stop.wait(backoff):
                 break
+            backoff = min(backoff * 2, _BACKOFF_MAX_S)
 
         self._set_status("stopped")

@@ -18,7 +18,6 @@ Run:
 import asyncio
 
 from bleak import BleakClient, BleakScanner
-
 from imu_payload import CHAR_UUID, DEVICE_NAME, format_human, parse_payload
 
 

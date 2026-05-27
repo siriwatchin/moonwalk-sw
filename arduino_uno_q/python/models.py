@@ -5,8 +5,9 @@ No Arduino SDK imports here — this module stays testable off-device.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from config import PHASE_LABELS
 

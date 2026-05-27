@@ -15,12 +15,16 @@ from __future__ import annotations
 import asyncio
 import queue
 import threading
-from typing import Iterator, Optional
+import time
+from collections.abc import Iterator
 
-from config import CHAR_UUID, DEVICE_NAME
+from config import BLE_STALL_TIMEOUT_S, CHAR_UUID, DEVICE_NAME
 
 _QUEUE_MAX = 2000     # ~100 s at 20 Hz; guards memory if the consumer ever stalls
 _SENTINEL = object()  # pushed to unblock lines() on stop
+_BACKOFF_START_S = 1.0   # reconnect backoff grows 1→2→4…→cap, resets after a real session
+_BACKOFF_MAX_S = 30.0
+_SESSION_OK_S = 10.0     # a session lasting this long counts as "connected" → reset backoff
 
 
 def scan(timeout: float = 8.0) -> list[dict]:
@@ -58,18 +62,25 @@ def scan(timeout: float = 8.0) -> list[dict]:
 
 
 class BleNanoReceiver:
-    def __init__(self, address: Optional[str] = None):
+    def __init__(self, address: str | None = None):
         # address=None -> scan + connect by name DEVICE_NAME (default NanoIMU).
         self._address = address
-        self._queue: "queue.Queue" = queue.Queue(maxsize=_QUEUE_MAX)
+        self._queue: queue.Queue = queue.Queue(maxsize=_QUEUE_MAX)
         self._status = "starting"
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._started = False
-        self._dropped = False
+        self._start_lock = threading.Lock()   # guards the one-time thread start in lines()
+        self._dropped = 0                      # samples shed because the queue was full
+        self._warned_drop = False
         self._stop = threading.Event()
+        self._last_rx = 0.0   # monotonic time of the last notification (stall watchdog)
 
     def status(self) -> str:
         return self._status
+
+    def dropped(self) -> int:
+        """Count of samples dropped due to a full queue (consumer fell behind)."""
+        return self._dropped
 
     def stop(self) -> None:
         """Signal the loop to stop and unblock lines()."""
@@ -107,6 +118,7 @@ class BleNanoReceiver:
             disconnected.set()
 
         def on_notify(_char, data: bytearray) -> None:
+            self._last_rx = time.monotonic()   # feed the stall watchdog
             line = data.decode("utf-8", errors="replace").strip()
             try:
                 self._queue.put_nowait(line)
@@ -116,39 +128,56 @@ class BleNanoReceiver:
                     self._queue.put_nowait(line)
                 except queue.Empty:
                     pass
-                if not self._dropped:
-                    self._dropped = True
+                self._dropped += 1
+                if not self._warned_drop:
+                    self._warned_drop = True
                     print("[ble] WARNING: queue full, dropping oldest samples", flush=True)
 
+        stalled = False
         async with BleakClient(device, disconnected_callback=on_disconnect) as client:
             self._set_status("connected")
+            self._last_rx = time.monotonic()   # arm the watchdog (grace before first sample)
             await client.start_notify(CHAR_UUID, on_notify)
-            # Wait until the peripheral drops OR we're asked to stop.
+            # Wait until the peripheral drops, data stalls, OR we're asked to stop. Leaving this
+            # block exits the BleakClient context = a clean disconnect, so forever() reconnects.
             while not disconnected.is_set() and not self._stop.is_set():
                 await asyncio.sleep(0.2)
+                if time.monotonic() - self._last_rx > BLE_STALL_TIMEOUT_S:
+                    stalled = True
+                    break
 
         if self._stop.is_set():
             self._set_status("stopped")
+        elif stalled:
+            self._set_status(f"stalled: no data {BLE_STALL_TIMEOUT_S}s / reconnecting")
         else:
             self._set_status("disconnected / reconnecting")
 
     def _run_loop(self) -> None:
         async def forever():
+            backoff = _BACKOFF_START_S
             while not self._stop.is_set():
+                t0 = time.monotonic()
                 try:
                     await self._run_once()
                 except Exception as exc:        # keep going across BLE errors
                     self._set_status(f"error: {exc}")
                 if self._stop.is_set():
                     break
-                await asyncio.sleep(2.0)         # backoff before reconnecting
+                # Reset backoff only after a session that actually lasted (a real connection),
+                # so a flapping "not found"/error loop keeps backing off instead of hammering.
+                if time.monotonic() - t0 >= _SESSION_OK_S:
+                    backoff = _BACKOFF_START_S
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, _BACKOFF_MAX_S)
 
         asyncio.run(forever())
 
     def lines(self) -> Iterator[str]:
-        if not self._started:
-            self._thread.start()
-            self._started = True
+        with self._start_lock:          # guard against concurrent lines() starting the thread twice
+            if not self._started:
+                self._thread.start()
+                self._started = True
         while not self._stop.is_set():
             item = self._queue.get()            # blocks until next notification / sentinel
             if item is _SENTINEL:

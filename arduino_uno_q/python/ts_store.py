@@ -22,7 +22,6 @@ plug it into `_write_batch` — see the TODO seam there.)
 from __future__ import annotations
 
 import threading
-import time
 
 from config import TS_BATCH_MAX, TS_FLUSH_INTERVAL_S
 from models import ImuSample

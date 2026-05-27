@@ -6,8 +6,8 @@ seams a future analytics step or Supabase uploader would consume.
 
 from __future__ import annotations
 
-import io
 import csv
+import io
 import threading
 import time
 from collections import deque
@@ -35,6 +35,7 @@ class SampleStore:
         self._count = 0
         self._bad = 0
         self._lost = 0             # estimated dropped samples (from timestamp_ms gaps)
+        self._dropped = 0          # samples the SOURCE shed before us (e.g. full BLE queue)
         self._last_ts = None       # last Nano timestamp_ms (for gap/loss detection)
         self._last_recv = 0.0
         self._started = time.time()
@@ -54,6 +55,11 @@ class SampleStore:
     def set_status(self, status: str) -> None:
         with self._lock:
             self._status = status
+
+    def set_dropped(self, dropped: int) -> None:
+        """Record the source-side dropped-sample count (full-queue shedding)."""
+        with self._lock:
+            self._dropped = dropped
 
     def append(self, sample: ImuSample) -> None:
         with self._lock:
@@ -114,6 +120,12 @@ class SampleStore:
         return {
             "rel_ms": recv,
             "t": [s.timestamp_ms for s in samples],
+            "ax": [round(s.ax, 4) for s in samples],
+            "ay": [round(s.ay, 4) for s in samples],
+            "az": [round(s.az, 4) for s in samples],
+            "gx": [round(s.gx, 4) for s in samples],
+            "gy": [round(s.gy, 4) for s in samples],
+            "gz": [round(s.gz, 4) for s in samples],
             "acc_norm": [round(s.acc_norm, 4) for s in samples],
             "gyro_norm": [round(s.gyro_norm, 4) for s in samples],
             "phase": [s.phase for s in samples],
@@ -131,6 +143,7 @@ class SampleStore:
                 "count": self._count,
                 "bad": self._bad,
                 "lost": self._lost,
+                "dropped": self._dropped,
                 "rate_hz": rate,
                 "buffered": len(self._dq),
                 "buffer_max": self._dq.maxlen,

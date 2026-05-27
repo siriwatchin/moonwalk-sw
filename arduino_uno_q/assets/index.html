@@ -12,6 +12,18 @@
 <body class="bg-[#0e1116] text-[#e6edf3] font-sans min-h-screen">
   <header class="flex items-center gap-4 px-5 py-3 border-b border-[#222]">
     <h1 class="text-lg font-semibold m-0">🦯 Smart Cane — UNO Q</h1>
+    <!-- Tab nav: this app is the realtime (raw-sample) view only; analysis is a separate
+         page that reads the TimeSeriesStore, not yet built here. -->
+    <nav class="flex items-center gap-1 ml-2">
+      <span class="px-3 py-1 rounded-lg text-[13px] font-semibold bg-[#21262d] border border-[#30363d]">Realtime</span>
+      <span class="px-3 py-1 rounded-lg text-[13px] text-[#6e7681] cursor-not-allowed" title="coming soon">Analysis</span>
+    </nav>
+    <!-- Slot switch: one slot shown full-width at a time (both stay bound in the backend). -->
+    <div id="slotTabs" class="flex items-center gap-1 ml-2">
+      <span class="text-xs text-[#8b949e] mr-1">Slot</span>
+      <button data-slot="A" class="slot-tab px-3 py-1 rounded-lg text-[13px] font-semibold border border-[#30363d]">A</button>
+      <button data-slot="B" class="slot-tab px-3 py-1 rounded-lg text-[13px] font-semibold border border-[#30363d]">B</button>
+    </div>
     <span id="badge" class="px-3 py-1 rounded-full text-[13px] font-semibold bg-[#30363d]">connecting…</span>
     <span id="meta" class="text-xs text-[#8b949e]"></span>
     <span class="flex-1"></span>
@@ -21,14 +33,16 @@
   </header>
 
   <div class="px-5 pt-3">
-    <div id="srcHint" class="text-xs text-[#8b949e]">Two compare slots — set each slot's source from its own dropdown (mock or a scanned Nano). Click <b>Scan BLE</b> to discover Nanos.</div>
+    <div id="srcHint" class="text-xs text-[#8b949e]">Realtime raw IMU — set each slot's source from its dropdown (mock or a scanned Nano). Click <b>Scan BLE</b> to discover Nanos.</div>
   </div>
 
   <!-- Two fixed compare slots (A / B), built by app.js into #panels. -->
   <main class="p-5">
-    <section id="panels" class="grid gap-[18px] [grid-template-columns:repeat(auto-fit,minmax(380px,1fr))]"></section>
+    <section id="panels" class="grid gap-[18px] grid-cols-1 max-w-3xl mx-auto"></section>
   </main>
 
+  <!-- Vendored Chart.js (offline, no CDN — same policy as tailwind.css). Realtime line charts. -->
+  <script src="chart.umd.min.js"></script>
   <!-- Pure REST polling (no Socket.IO) — app.js polls /api/* on the WebUI brick. -->
   <script src="app.js"></script>
 </body>

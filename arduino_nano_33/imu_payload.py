@@ -11,21 +11,19 @@ Source CSV line (11 comma-separated fields) from nano_imu_ble_sender.ino:
 ---------------------------------------------------------------------------
 """
 
-# ---- Shared BLE contract (must match the sender) ------------------------
-DEVICE_NAME = "NanoIMU"
-SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214"
-CHAR_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214"
+import math
 
-# Total comma-separated fields in a valid payload (leading "IMU" tag + 10 values).
-_FIELD_COUNT = 11
-
-# Walking-phase codes emitted by the sender (see classifyPhase in the sketch).
-PHASE_LABELS = {
-    0: "UNKNOWN",
-    1: "STATIONARY_OR_ZERO_VELOCITY",
-    2: "GROUND_CONTACT_WITH_ROTATION",
-    3: "SWING_OR_ON_AIR",
-}
+# ---- Shared BLE contract (single source of truth) -----------------------
+# Generated from protocol/ble_contract.json by protocol/gen_contract.py — DO NOT edit values
+# here. Re-exported so callers can keep importing them from imu_payload.
+from ble_contract_gen import (  # noqa: F401
+    CHAR_UUID,
+    DEVICE_NAME,
+    FIELD_COUNT,
+    PAYLOAD_TAG,
+    PHASE_LABELS,
+    SERVICE_UUID,
+)
 
 
 def parse_payload(raw: str) -> dict | None:
@@ -34,7 +32,7 @@ def parse_payload(raw: str) -> dict | None:
     Returns None for anything that isn't a well-formed "IMU,..." line.
     """
     parts = raw.strip().split(",")
-    if len(parts) != _FIELD_COUNT or parts[0] != "IMU":
+    if len(parts) != FIELD_COUNT or parts[0] != PAYLOAD_TAG:
         return None
 
     try:
@@ -43,6 +41,10 @@ def parse_payload(raw: str) -> dict | None:
         f = [float(x) for x in parts[2:10]]
         phase = int(parts[10])
     except ValueError:
+        return None
+
+    # Reject present-but-nonsensical values: non-finite floats or unknown phase codes.
+    if not all(math.isfinite(v) for v in f) or phase not in PHASE_LABELS:
         return None
 
     return {
