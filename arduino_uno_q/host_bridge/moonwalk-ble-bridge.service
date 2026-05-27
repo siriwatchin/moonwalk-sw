@@ -1,0 +1,31 @@
+# systemd unit TEMPLATE for the host-side REST BLE bridge.
+#
+# Runs on the UNO Q Debian HOST (not the App Lab container). Adjust the paths below to match
+# your deploy, then install as /etc/systemd/system/moonwalk-ble-bridge.service:
+#
+#   sudo cp moonwalk-ble-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now moonwalk-ble-bridge
+#
+# The bridge needs the App Lab app's python/ modules (config, ble_receiver, parser) on its
+# import path. By default ble_bridge.py looks for ../python; if your layout differs, set
+# MOONWALK_PY_DIR (below) to the directory that contains config.py.
+
+[Unit]
+Description=Moon Walk BLE REST bridge (NanoIMU -> HTTP :8787)
+After=bluetooth.service network-online.target
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+User=arduino
+WorkingDirectory=/home/arduino/moonwalk-ble-bridge
+Environment=PYTHONUNBUFFERED=1
+# Point this at the directory holding config.py / ble_receiver.py / parser.py if not ../python:
+# Environment=MOONWALK_PY_DIR=/home/arduino/moonwalk-sw/arduino_uno_q/python
+ExecStart=/home/arduino/moonwalk-ble-bridge/.venv/bin/python ble_bridge.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

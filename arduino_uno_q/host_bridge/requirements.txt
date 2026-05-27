@@ -1,0 +1,4 @@
+# Host-side REST BLE bridge (run on the UNO Q Debian host, NOT in the App Lab container).
+bleak
+fastapi
+uvicorn

@@ -1,77 +1,268 @@
-"""UNO Q IMU WebUI app entry point.
+"""UNO Q IMU app entry point — runtime mode comes from config.APP_MODE (no CLI flags).
 
-    python main.py --mode mock     # start in mock (default)
-    python main.py --mode ble      # start receiving a real NanoIMU over BLE
+App Lab launches this with its Run button and passes no arguments, so the mode is a hardcoded
+constant. Just run `python python/main.py`; change behaviour by editing config.py.
 
-The source can also be switched live from the dashboard (Mock/BLE + scan/connect) via the
-SourceManager — `--mode` / MODE env / config.DEFAULT_MODE only sets the *initial* source.
+config.APP_MODE:
+    "dashboard" -> start the WebUI + TimeSeriesStore dashboard and apply config.STARTUP_SLOTS.
+    "empty"     -> start the dashboard with both slots unbound (add sources from the UI).
+    "scan"      -> list nearby BLE devices and exit. No bricks imported.
+    "debug"     -> connect to the Nano and print every parsed sample + Hz. No bricks imported.
 
-Pipeline (mock and BLE alike):
-    source.lines() -> parse_line -> SampleStore.append (+ note_bad) -> TimeSeriesStore.write
-The browser polls the WebUI brick's /api/* endpoints (REST, no Socket.IO).
+Bluetooth note: the App Lab Python container has NO BlueZ/D-Bus access, so "scan"/"debug" (and
+any *direct* BLE) only work when run on the UNO Q host over SSH, not inside the container. A
+live Nano reaches the dashboard through the host-side bridge (ble_bridge.py) — see config
+BLE_TRANSPORT. The "dashboard"/"empty" modes are what run inside the container.
 
-Runs on the Arduino App Lab WebUI Brick (+ TimeSeriesStore Brick); both are provided by
-App Lab on the UNO Q (importing them off-device fails by design).
+The `debug_*` helpers below print with a `[debug]` prefix and concrete values so you can see
+exactly where the link breaks. The BLE contract comes from config.py and must match the Nano
+firmware (arduino_nano_33/nano_imu_ble_sender.ino).
 """
 
 from __future__ import annotations
 
-import argparse
-import os
+import asyncio
+import sys
+import time
 
-from config import BUFFER_MAXLEN, DEFAULT_MODE, UI_PORT
-from registry import DeviceRegistry
+import config
+from config import CHAR_UUID, DEVICE_NAME, INTERVAL_MS, SERVICE_UUID
+from parser import parse_line
+
+# Expected over-the-air payload length (CSV ~60-70 B). The ATT MTU must exceed this or
+# notifications get truncated and every line fails to parse. (MTU usable bytes = mtu - 3.)
+_MIN_USABLE_BYTES = 73
 
 
-def resolve_mode(cli_mode: str | None) -> tuple[str, str]:
-    """Initial source: --mode arg > MODE env var > config.DEFAULT_MODE.
+def _dbg(msg: str) -> None:
+    print(f"[debug] {msg}", flush=True)
 
-    Returns (mode, origin) where origin is 'cli' | 'env' | 'default' for logging.
+
+def _matches_nano(name: str | None, service_uuids: list[str]) -> bool:
+    """True if this advertisement looks like our Nano — by local name OR advertised service.
+
+    On Linux/BlueZ the local name is often missing during a passive scan, so we also accept
+    a device that advertises our SERVICE_UUID (the Nano does `setAdvertisedService`).
     """
-    if cli_mode:
-        mode, origin = cli_mode, "cli"
-    elif os.getenv("MODE"):
-        mode, origin = os.environ["MODE"], "env"
-    else:
-        mode, origin = DEFAULT_MODE, "default"
-    if mode not in ("mock", "ble"):
-        raise SystemExit(f"invalid mode {mode!r} (use mock|ble)")
-    return mode, origin
+    if (name or "").strip() == DEVICE_NAME:
+        return True
+    return SERVICE_UUID.lower() in {u.lower() for u in service_uuids}
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="UNO Q IMU WebUI gateway")
-    ap.add_argument("--mode", choices=["mock", "ble"], default=None,
-                    help="initial data source; overrides MODE env / config.DEFAULT_MODE")
-    ap.add_argument("--buffer", type=int, default=BUFFER_MAXLEN)
-    args = ap.parse_args()
+async def debug_scan(timeout: float = 8.0):
+    """Scan and print every device found; return the matching NanoIMU device (or None)."""
+    from bleak import BleakScanner
 
-    mode, origin = resolve_mode(args.mode)
-    registry = DeviceRegistry(maxlen=args.buffer)
+    _dbg(f"scanning for {timeout:.0f}s ...")
+    found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    if not found:
+        _dbg("no BLE devices seen at all — is the adapter powered? (try: bluetoothctl show)")
+        return None
+
+    match = None
+    _dbg(f"found {len(found)} device(s):")
+    for dev, adv in found.values():
+        name = (getattr(adv, "local_name", None) or dev.name or "(unknown)").strip()
+        svc = list(getattr(adv, "service_uuids", []) or [])
+        rssi = getattr(adv, "rssi", None)
+        flag = ""
+        if _matches_nano(name, svc):
+            flag = "   <-- NanoIMU MATCH"
+            match = dev
+        _dbg(f"  {dev.address}  name={name!r}  rssi={rssi}  services={svc}{flag}")
+
+    if match is None:
+        _dbg(f"no device matching name={DEVICE_NAME!r} or service={SERVICE_UUID} was found.")
+        _dbg("possible causes: Nano not advertising / out of range / a phone scanner is "
+             "already connected (only one central allowed) / adapter not powered.")
+    return match
+
+
+async def debug_resolve(address: str | None, timeout: float = 8.0):
+    """Resolve the target device — by explicit address, else by scanning for the Nano."""
+    if address:
+        from bleak import BleakScanner
+        _dbg(f"resolving address {address} (timeout {timeout:.0f}s) ...")
+        dev = await BleakScanner.find_device_by_address(address, timeout=timeout)
+        if dev is None:
+            _dbg(f"address {address} not found (not advertising / wrong address / out of range).")
+        return dev
+    return await debug_scan(timeout)
+
+
+def _check_characteristic(client) -> bool:
+    """Enumerate GATT; confirm CHAR_UUID exists and supports notify. Prints PASS/FAIL."""
+    target = CHAR_UUID.lower()
+    found_char = None
+    _dbg("GATT services / characteristics:")
+    for service in client.services:
+        _dbg(f"  service {service.uuid}")
+        for char in service.characteristics:
+            props = ",".join(char.properties)
+            mark = ""
+            if char.uuid.lower() == target:
+                found_char = char
+                mark = "   <-- target characteristic"
+            _dbg(f"    char {char.uuid}  props=[{props}]{mark}")
+
+    if found_char is None:
+        _dbg(f"FAIL: characteristic {CHAR_UUID} not present on the device.")
+        return False
+    if "notify" not in found_char.properties:
+        _dbg(f"FAIL: characteristic {CHAR_UUID} has no 'notify' property "
+             f"(props={found_char.properties}).")
+        return False
+    _dbg(f"PASS: characteristic {CHAR_UUID} found with 'notify'.")
+    return True
+
+
+async def debug_stream(device, seconds: float | None) -> None:
+    """Connect, verify MTU + characteristic, subscribe, and print every parsed sample."""
+    from bleak import BleakClient
+
+    disconnected = asyncio.Event()
+
+    def on_disconnect(_client) -> None:
+        disconnected.set()
+
+    stats = {"good": 0, "bad": 0, "win_good": 0, "win_bad": 0, "last_report": time.monotonic()}
+
+    def on_notify(_char, data: bytearray) -> None:
+        raw = data.decode("utf-8", errors="replace").strip()
+        sample = parse_line(raw)
+        if sample is None:
+            stats["bad"] += 1
+            stats["win_bad"] += 1
+            _dbg(f"BAD  ({len(data)}B) {raw!r}")
+        else:
+            stats["good"] += 1
+            stats["win_good"] += 1
+            _dbg(f"OK   ts={sample.timestamp_ms} "
+                 f"ax={sample.ax:+.3f} ay={sample.ay:+.3f} az={sample.az:+.3f} "
+                 f"gx={sample.gx:+.2f} gy={sample.gy:+.2f} gz={sample.gz:+.2f} "
+                 f"acc_norm={sample.acc_norm:.3f} gyro_norm={sample.gyro_norm:.3f} "
+                 f"phase={sample.phase}({sample.phase_label})")
+
+        now = time.monotonic()
+        elapsed = now - stats["last_report"]
+        if elapsed >= 1.0:
+            rate = stats["win_good"] / elapsed
+            _dbg(f"--- rate={rate:.1f}Hz  good={stats['win_good']}  bad={stats['win_bad']} "
+                 f"(total good={stats['good']} bad={stats['bad']}) ---")
+            stats["win_good"] = stats["win_bad"] = 0
+            stats["last_report"] = now
+
+    _dbg(f"connecting to {getattr(device, 'name', None) or DEVICE_NAME} ({device.address}) ...")
+    async with BleakClient(device, disconnected_callback=on_disconnect) as client:
+        _dbg(f"connected. mtu_size={client.mtu_size}")
+        usable = client.mtu_size - 3
+        if usable < _MIN_USABLE_BYTES:
+            _dbg(f"WARNING: usable MTU {usable}B < ~{_MIN_USABLE_BYTES}B — payload may be "
+                 "truncated; expect 'BAD' lines. BlueZ usually negotiates a larger MTU.")
+
+        if not _check_characteristic(client):
+            _dbg("aborting: target characteristic not usable for notify.")
+            return
+
+        await client.start_notify(CHAR_UUID, on_notify)
+        _dbg(f"subscribed. streaming (expect ~{1000 // INTERVAL_MS}Hz). "
+             f"{'stopping after %.0fs' % seconds if seconds else 'Ctrl-C to stop'} ...")
+
+        try:
+            if seconds:
+                # Stop on timeout OR early disconnect, whichever comes first.
+                await asyncio.wait_for(disconnected.wait(), timeout=seconds)
+            else:
+                await disconnected.wait()
+        except asyncio.TimeoutError:
+            _dbg(f"reached --seconds={seconds:.0f}; stopping.")
+        finally:
+            try:
+                await client.stop_notify(CHAR_UUID)
+            except Exception:
+                pass
+
+    if disconnected.is_set():
+        _dbg("peripheral disconnected.")
+
+
+async def run_debug(address: str | None, scan_timeout: float, seconds: float | None) -> None:
+    _dbg("BLE contract in use (compare against arduino_nano_33/nano_imu_ble_sender.ino):")
+    _dbg(f"  DEVICE_NAME  = {DEVICE_NAME!r}")
+    _dbg(f"  SERVICE_UUID = {SERVICE_UUID}")
+    _dbg(f"  CHAR_UUID    = {CHAR_UUID}")
+    _dbg(f"  INTERVAL_MS  = {INTERVAL_MS} (~{1000 // INTERVAL_MS}Hz)")
+
+    # Reconnect loop: keep retrying so a Nano power-cycle / brief range loss recovers.
+    while True:
+        device = await debug_resolve(address, scan_timeout)
+        if device is not None:
+            try:
+                await debug_stream(device, seconds)
+            except Exception as exc:        # keep going across BLE errors
+                _dbg(f"error: {exc!r}")
+            if seconds:                     # bounded run: don't loop forever
+                return
+        _dbg("retrying in 2.0s ... (Ctrl-C to stop)")
+        await asyncio.sleep(2.0)
+
+
+def run_dashboard(empty: bool) -> None:
+    """Start the full App Lab dashboard (WebUI + TimeSeriesStore bricks) and block.
+
+    The brick imports stay deferred to here so `scan`/`debug` modes — and any off-device
+    `import main` — never pull in the App-Lab-only bricks.
+    """
+    from config import BUFFER_MAXLEN, STARTUP_SLOTS, UI_PORT
+    from registry import DeviceRegistry
+
+    registry = DeviceRegistry(maxlen=BUFFER_MAXLEN)
 
     # TimeSeriesStore Brick: persist every sample (per-device metrics). (Arduino SDK.)
     from ts_store import TsStore
     tsstore = TsStore()
 
-    # SourceManager owns the concurrent sources + ingest workers (multi-device).
+    # SourceManager owns the concurrent per-slot sources + ingest workers.
     from source_manager import SourceManager
     mgr = SourceManager(registry, tsstore)
-    if mode == "mock":
-        mgr.set_mode("mock")    # spins up the normal + injured mock pair
-    else:
-        mgr.set_mode("ble")     # devices added later via the dashboard / connect()
+    if not empty:
+        for slot, cfg in STARTUP_SLOTS.items():
+            mgr.set_slot(slot, cfg.get("kind", "none"),
+                         gait=cfg.get("gait", "normal"),
+                         address=cfg.get("address"), label=cfg.get("label"))
 
-    # WebUI Brick: register the /api/* routes (read + control). Keep a reference so the
-    # brick stays registered with the App framework before App.run().
+    # WebUI Brick: register the /api/* routes (read + control).
     from webui_server import WebUIServer
     _server = WebUIServer(registry, mgr)  # noqa: F841
 
-    print(f"UNO Q IMU dashboard starting (initial mode={mode} [{origin}], port={UI_PORT})")
+    print(f"UNO Q IMU dashboard starting (port={UI_PORT}, "
+          f"{'empty' if empty else 'STARTUP_SLOTS'})", flush=True)
     from arduino.app_utils import App
     try:
         App.run()         # starts all bricks (WebUI + TimeSeriesStore) and blocks
     finally:
         tsstore.stop()    # cleanly stop the TimeSeriesStore service on shutdown
+
+
+def main() -> None:
+    mode = config.APP_MODE
+    if mode == "dashboard":
+        run_dashboard(empty=False)
+    elif mode == "empty":
+        run_dashboard(empty=True)
+    elif mode in ("scan", "debug"):
+        try:
+            if mode == "scan":
+                asyncio.run(debug_scan(config.SCAN_TIMEOUT_S))
+            else:
+                asyncio.run(run_debug(config.DEBUG_ADDRESS, config.SCAN_TIMEOUT_S,
+                                      config.DEBUG_SECONDS))
+        except KeyboardInterrupt:
+            print("\n[debug] stopped")
+    else:
+        print(f"[main] unknown APP_MODE {mode!r}; expected one of "
+              "'dashboard', 'empty', 'scan', 'debug' (edit config.APP_MODE).", flush=True)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

@@ -23,20 +23,35 @@ _QUEUE_MAX = 2000     # ~100 s at 20 Hz; guards memory if the consumer ever stal
 _SENTINEL = object()  # pushed to unblock lines() on stop
 
 
-def scan(timeout: float = 6.0) -> list[dict]:
-    """Discover nearby BLE devices. Returns [{"name","address"}] (named first).
+def scan(timeout: float = 8.0) -> list[dict]:
+    """Discover nearby BLE devices. Returns [{"name","address"}] (NanoIMU first).
 
-    Runs a throwaway event loop — call only when NOT connected (one adapter).
+    Reads the advertisement data's local name, not just BLEDevice.name: on Linux/BlueZ
+    `device.name` is often None during a passive scan, so the Nano would show as
+    "(unknown)". `return_adv=True` gives us AdvertisementData.local_name, which carries
+    the advertised name reliably. Runs a throwaway event loop.
     """
     from bleak import BleakScanner
 
+    def _entry(name: str | None, address: str) -> dict:
+        return {"name": (name or "").strip() or "(unknown)", "address": address}
+
     async def _discover():
-        devices = await BleakScanner.discover(timeout=timeout)
         out = []
-        for d in devices:
-            out.append({"name": d.name or "(unknown)", "address": d.address})
-        # Named devices first (NanoIMU is what we care about), then the rest.
-        out.sort(key=lambda x: (x["name"] == "(unknown)", x["name"]))
+        try:
+            found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+            # found: {address: (BLEDevice, AdvertisementData)}
+            for dev, adv in found.values():
+                name = getattr(adv, "local_name", None) or dev.name
+                out.append(_entry(name, dev.address))
+        except TypeError:
+            # Older bleak without return_adv — fall back to device.name only.
+            for dev in await BleakScanner.discover(timeout=timeout):
+                out.append(_entry(dev.name, dev.address))
+        # NanoIMU first, then other named devices, unknowns last.
+        out.sort(key=lambda x: (x["name"] != DEVICE_NAME,
+                                x["name"] == "(unknown)",
+                                x["name"]))
         return out
 
     return asyncio.run(_discover())

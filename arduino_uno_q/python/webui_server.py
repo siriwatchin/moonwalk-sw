@@ -29,10 +29,10 @@ class WebUIServer:
     def _register_api(self) -> None:
         ui, reg, mgr = self.ui, self.reg, self.mgr
 
-        # ---- GET: read state (keyed by device; no query params) ----------
+        # ---- GET: read state (keyed by slot "A"/"B"; no query params) -----
         ui.expose_api("GET", "/api/status", lambda _req=None: {
-            **mgr.state(),                 # mode, scan_devices, devices[]
-            "devices_status": reg.status(),  # per-device buffer/ingest stats
+            **mgr.state(),                 # scan_devices, slots{A,B}
+            "devices_status": reg.status(),  # per-slot buffer/ingest stats
         })
         ui.expose_api("GET", "/api/latest", lambda _req=None: {"devices": reg.latest()})
         ui.expose_api("GET", "/api/series", lambda _req=None: {"devices": reg.series()})
@@ -41,19 +41,16 @@ class WebUIServer:
         ui.expose_api("POST", "/api/clear", lambda data=None: {
             "cleared": True, "removed": reg.clear_buffers(),
         })
-        # Top-level mode: {"mode":"mock"|"ble"}  (mock spins up normal+injured pair)
-        ui.expose_api("POST", "/api/source", lambda data=None: mgr.set_mode(
-            (data or {}).get("mode", "mock"),
+        # Set a slot's source: {"slot":"A"|"B","kind":"none"|"mock"|"ble",
+        #                       "gait":"normal"|"altered","address":<opt>,"label":<opt>}
+        ui.expose_api("POST", "/api/slot/set", lambda data=None: mgr.set_slot(
+            (data or {}).get("slot"), (data or {}).get("kind", "none"),
+            gait=(data or {}).get("gait", "normal"),
+            address=(data or {}).get("address"), label=(data or {}).get("label"),
         ))
+        # Reset both slots to the demo pair (A=normal, B=injured)
+        ui.expose_api("POST", "/api/reset", lambda data=None: mgr.reset())
         # Scan for BLE devices -> {"devices":[{name,address}]}
         ui.expose_api("POST", "/api/ble/scan", lambda data=None: {
-            "devices": mgr.scan(float((data or {}).get("timeout", 6.0))),
+            "devices": mgr.scan(float((data or {}).get("timeout", 8.0))),
         })
-        # Add a BLE device: {"address":"…","label":<opt>}
-        ui.expose_api("POST", "/api/ble/connect", lambda data=None: mgr.connect(
-            (data or {}).get("address"), (data or {}).get("label"),
-        ))
-        # Remove a device: {"key":"…"}
-        ui.expose_api("POST", "/api/ble/disconnect", lambda data=None: mgr.disconnect(
-            (data or {}).get("key"),
-        ))

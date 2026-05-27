@@ -1,8 +1,10 @@
 "use strict";
 
-// Multi-device dashboard. Reads everything via the WebUI brick's REST API (no Socket.IO);
-// the browser polls /api/* which return one JSON blob keyed by device.
+// Two fixed compare slots (A / B). Each slot has its own source <select> (none / mock /
+// scanned BLE Nano). Everything goes through the WebUI brick's REST API (no Socket.IO):
+// the browser polls /api/* which return JSON keyed by slot ("A"/"B").
 
+const SLOTS = ["A", "B"];
 const PHASE_NAMES = {
   0: "UNKNOWN", 1: "STATIONARY / ZERO-VEL",
   2: "GROUND CONTACT + ROTATION", 3: "SWING / ON-AIR",
@@ -13,6 +15,13 @@ const $ = (id) => document.getElementById(id);
 const fmt = (v, d = 3) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
 const api = (path, opts) => fetch(`/api${path}`, { cache: "no-store", ...(opts || {}) });
 
+// Live charts plot value-vs-TIME on a fixed scrolling window: the newest sample sits at the
+// right edge ("0s") and the trace scrolls right→left. x = the Nano's own timestamp_ms (even
+// 50 ms spacing, honest across both bridge transports). A time jump > GAP_MS breaks the line,
+// so dropped samples show as a real gap instead of a stretched segment.
+const WINDOW_MS = 10000;   // ~matches server RECENT_POINTS (200 @ 20 Hz ≈ 10 s)
+const GAP_MS = 200;        // break the trace when sample time jumps more than this
+
 function setBadge(text, cls) {
   const b = $("badge");
   b.textContent = text;
@@ -20,22 +29,43 @@ function setBadge(text, cls) {
     (cls === "live" ? "bg-[#1f6f3d]" : cls === "down" ? "bg-[#8a1f1f]" : "bg-[#30363d]");
 }
 
-// ---- per-device cards (created on demand, keyed by device) ----
-const cards = {};          // key -> {root, els, acc[], gyro[], phase[]}
-const MAXPTS = 200;
+// ---- slot source <select> encoding ----
+//   ""             -> none
+//   "mock:normal"  -> mock gait normal
+//   "mock:altered" -> mock gait altered (injured)
+//   "ble:<addr>"   -> live BLE device by address
+function parseSlotValue(v) {
+  if (!v) return { kind: "none" };
+  const i = v.indexOf(":");
+  const kind = v.slice(0, i), rest = v.slice(i + 1);
+  if (kind === "mock") return { kind: "mock", gait: rest };
+  if (kind === "ble") return { kind: "ble", address: rest };
+  return { kind: "none" };
+}
+function slotValueFromConfig(cfg) {
+  if (!cfg) return "";
+  if (cfg.kind === "mock") return "mock:" + (cfg.gait || "normal");
+  if (cfg.kind === "ble") return "ble:" + cfg.address;
+  return "";
+}
 
-function deviceCard(key) {
-  if (cards[key]) return cards[key];
+// ---- fixed slot panels (built once) ----
+const panels = {};         // slot -> {root, els}
+let bleDevices = [];        // [{name,address}] for the dropdowns (scanned ∪ assigned)
+let lastOptSig = null;      // rebuild options only when the BLE list changes
+
+function buildPanel(slot) {
   const root = document.createElement("section");
   root.className = "bg-[#161b22] border border-[#21262d] rounded-xl p-4";
   root.innerHTML = `
-    <div class="flex items-center gap-2 mb-1">
-      <span class="font-bold text-[15px]" data-label>—</span>
-      <span class="text-xs text-[#8b949e]" data-key></span>
+    <div class="flex items-center gap-2 mb-2">
+      <span class="font-bold text-[15px]">Slot ${slot}</span>
+      <span class="text-xs text-[#8b949e]" data-label>—</span>
       <span class="flex-1"></span>
       <span class="phase inline-block px-3 py-1 rounded-lg font-bold text-[13px] bg-phase0" data-phase>—</span>
     </div>
-    <div class="text-[11px] text-[#8b949e] mb-3" data-meta></div>
+    <select data-sel class="bg-[#0e1116] border border-[#30363d] rounded-lg px-2 py-1.5 text-[13px] w-full mb-2"></select>
+    <div class="text-[11px] text-[#8b949e] mb-3" data-meta>no source selected</div>
     <div class="flex gap-4 text-xs text-[#8b949e] mb-3">
       <div>acc_norm <span class="text-[22px] font-bold tabular-nums text-[#e6edf3]" data-accN>—</span></div>
       <div>gyro_norm <span class="text-[22px] font-bold tabular-nums text-[#e6edf3]" data-gyroN>—</span></div>
@@ -59,66 +89,125 @@ function deviceCard(key) {
     <div class="text-[11px] uppercase tracking-wider text-[#8b949e] mt-2">phase</div>
     <canvas data-cphase class="w-full h-16 block"></canvas>
   `;
-  $("devices").appendChild(root);
+  $("panels").appendChild(root);
   const q = (sel) => root.querySelector(sel);
-  const card = {
-    root,
-    els: {
-      label: q("[data-label]"), key: q("[data-key]"), phase: q("[data-phase]"), meta: q("[data-meta]"),
-      accN: q("[data-accN]"), gyroN: q("[data-gyroN]"),
-      ax: q("[data-ax]"), ay: q("[data-ay]"), az: q("[data-az]"),
-      gx: q("[data-gx]"), gy: q("[data-gy]"), gz: q("[data-gz]"),
-      cacc: q("[data-cacc]"), cgyro: q("[data-cgyro]"), cphase: q("[data-cphase]"),
-    },
-    acc: [], gyro: [], phase: [],
+  const els = {
+    sel: q("[data-sel]"), label: q("[data-label]"), phase: q("[data-phase]"), meta: q("[data-meta]"),
+    accN: q("[data-accN]"), gyroN: q("[data-gyroN]"),
+    ax: q("[data-ax]"), ay: q("[data-ay]"), az: q("[data-az]"),
+    gx: q("[data-gx]"), gy: q("[data-gy]"), gz: q("[data-gz]"),
+    cacc: q("[data-cacc]"), cgyro: q("[data-cgyro]"), cphase: q("[data-cphase]"),
   };
-  card.els.key.textContent = key;
-  cards[key] = card;
-  return card;
+  els.sel.onchange = async () => {
+    const cfg = parseSlotValue(els.sel.value);
+    $("srcHint").textContent = `slot ${slot} → ${els.sel.options[els.sel.selectedIndex].text}…`;
+    const res = await postJSON("/slot/set", { slot, ...cfg });
+    if (res) $("srcHint").textContent = `slot ${slot} set`;
+    pollStatus();
+  };
+  panels[slot] = { root, els };
 }
 
-function removeCard(key) {
-  if (cards[key]) { cards[key].root.remove(); delete cards[key]; }
+function renderSlotOptions(sel) {
+  const cur = sel.value;
+  sel.innerHTML = "";
+  const add = (v, t) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); };
+  add("", "— no source —");
+  add("mock:normal", "Mock: normal");
+  add("mock:altered", "Mock: injured");
+  bleDevices.forEach((d) => add("ble:" + d.address, `${d.name} (${d.address})`));
+  if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;  // keep selection
+}
+function renderAllOptions() {
+  for (const s of SLOTS) renderSlotOptions(panels[s].els.sel);
+}
+
+function clearPanel(slot) {
+  const e = panels[slot].els;
+  e.label.textContent = "(no source)";
+  for (const k of ["ax", "ay", "az", "gx", "gy", "gz"]) e[k].textContent = "—";
+  e.accN.textContent = "—"; e.gyroN.textContent = "—";
+  e.phase.textContent = "—";
+  e.phase.className = "phase inline-block px-3 py-1 rounded-lg font-bold text-[13px] bg-phase0";
+  lineChart(e.cacc, [], [], "#58a6ff", 9.80665);
+  lineChart(e.cgyro, [], [], "#f0883e");
+  stepChart(e.cphase, [], []);
 }
 
 // ---- canvas charts (no external libs) ----
-function lineChart(canvas, data, color, baseline = null) {
+function setupCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
   canvas.width = w * dpr; canvas.height = h * dpr;
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+// Map a timestamp (ms) to a pixel x within the [maxT - WINDOW_MS, maxT] scrolling window.
+function timeMapX(ts, w) {
+  const maxT = ts.length ? ts[ts.length - 1] : 0;
+  const left = maxT - WINDOW_MS;
+  return (t) => ((t - left) / WINDOW_MS) * w;
+}
+
+// Vertical gridline every 2 s + "-Ns / 0s" edge labels (the realtime time axis).
+function drawTimeGrid(ctx, w, h, ts) {
+  if (!ts || !ts.length) return;
+  const maxT = ts[ts.length - 1], X = timeMapX(ts, w);
+  ctx.strokeStyle = "#21262d"; ctx.lineWidth = 1;
+  for (let s = 0; s <= WINDOW_MS / 1000; s += 2) {
+    const px = X(maxT - s * 1000);
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+  }
+  ctx.fillStyle = "#6e7681"; ctx.font = "9px ui-monospace, monospace";
+  ctx.textAlign = "left"; ctx.fillText("-" + (WINDOW_MS / 1000) + "s", 2, h - 2);
+  ctx.textAlign = "right"; ctx.fillText("0s", w - 2, h - 2); ctx.textAlign = "left";
+}
+
+// Stroke a polyline over (ts, data), lifting the pen across time gaps > GAP_MS.
+function strokeOverTime(ctx, X, y, ts, data) {
+  ctx.beginPath();
+  let pen = false;
+  for (let i = 0; i < data.length; i++) {
+    const px = X(ts[i]), py = y(data[i]);
+    if (!pen || ts[i] - ts[i - 1] > GAP_MS) { ctx.moveTo(px, py); pen = true; }
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+}
+
+function lineChart(canvas, ts, data, color, baseline = null) {
+  const { ctx, w, h } = setupCanvas(canvas);
   if (!data || data.length < 2) return;
   let lo = Math.min(...data), hi = Math.max(...data);
   if (baseline !== null) { lo = Math.min(lo, baseline); hi = Math.max(hi, baseline); }
   if (hi - lo < 1e-6) { hi += 1; lo -= 1; }
   const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
-  const x = (i) => (i / (data.length - 1)) * w, y = (v) => h - ((v - lo) / (hi - lo)) * h;
+  const X = timeMapX(ts, w), y = (v) => h - ((v - lo) / (hi - lo)) * h;
+  drawTimeGrid(ctx, w, h, ts);
   if (baseline !== null) {
     ctx.strokeStyle = "#30363d"; ctx.setLineDash([4, 4]); ctx.beginPath();
     ctx.moveTo(0, y(baseline)); ctx.lineTo(w, y(baseline)); ctx.stroke(); ctx.setLineDash([]);
   }
-  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
-  data.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)));
-  ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = 2;
+  strokeOverTime(ctx, X, y, ts, data);
 }
-function stepChart(canvas, data) {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  canvas.width = w * dpr; canvas.height = h * dpr;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+function stepChart(canvas, ts, data) {
+  const { ctx, w, h } = setupCanvas(canvas);
   if (!data || data.length < 2) return;
   const lo = -0.3, hi = 3.3;
-  const x = (i) => (i / (data.length - 1)) * w, y = (v) => h - ((v - lo) / (hi - lo)) * h;
+  const X = timeMapX(ts, w), y = (v) => h - ((v - lo) / (hi - lo)) * h;
+  drawTimeGrid(ctx, w, h, ts);
   ctx.strokeStyle = "#21262d"; ctx.lineWidth = 1;
   for (const lvl of [0, 1, 2, 3]) { ctx.beginPath(); ctx.moveTo(0, y(lvl)); ctx.lineTo(w, y(lvl)); ctx.stroke(); }
   ctx.strokeStyle = "#a371f7"; ctx.lineWidth = 2; ctx.beginPath();
-  data.forEach((v, i) => {
-    const px = x(i);
-    if (i === 0) { ctx.moveTo(px, y(v)); return; }
-    ctx.lineTo(px, y(data[i - 1])); ctx.lineTo(px, y(v));
-  });
+  let pen = false;
+  for (let i = 0; i < data.length; i++) {
+    const px = X(ts[i]);
+    if (!pen || ts[i] - ts[i - 1] > GAP_MS) { ctx.moveTo(px, y(data[i])); pen = true; continue; }
+    ctx.lineTo(px, y(data[i - 1])); ctx.lineTo(px, y(data[i]));   // step: hold then rise
+  }
   ctx.stroke();
 }
 
@@ -130,74 +219,62 @@ async function pollData() {
       api("/latest").then((r) => r.json()),
     ]);
     const sdev = series.devices || {}, ldev = latest.devices || {};
-    const seen = new Set();
-    for (const [key, s] of Object.entries(sdev)) {
-      seen.add(key);
-      const card = deviceCard(key);
-      card.els.label.textContent = s.label || key;
-      lineChart(card.els.cacc, s.acc_norm, "#58a6ff", 9.80665);
-      lineChart(card.els.cgyro, s.gyro_norm, "#f0883e");
-      stepChart(card.els.cphase, s.phase);
-      const L = ldev[key];
+    for (const slot of SLOTS) {
+      const s = sdev[slot];
+      if (!s) { clearPanel(slot); continue; }
+      const e = panels[slot].els;
+      e.label.textContent = s.label || slot;
+      const ts = s.t || [];   // Nano timestamp_ms per sample — the chart x-axis (time)
+      lineChart(e.cacc, ts, s.acc_norm, "#58a6ff", 9.80665);
+      lineChart(e.cgyro, ts, s.gyro_norm, "#f0883e");
+      stepChart(e.cphase, ts, s.phase);
+      const L = ldev[slot];
       if (L) {
-        for (const k of ["ax", "ay", "az", "gx", "gy", "gz"]) card.els[k].textContent = fmt(L[k]);
-        card.els.accN.textContent = fmt(L.acc_norm, 2);
-        card.els.gyroN.textContent = fmt(L.gyro_norm, 2);
-        card.els.phase.textContent = PHASE_NAMES[L.phase] ?? "—";
-        card.els.phase.className = "phase inline-block px-3 py-1 rounded-lg font-bold text-[13px] " + (PHASE_BG[L.phase] || PHASE_BG[0]);
+        for (const k of ["ax", "ay", "az", "gx", "gy", "gz"]) e[k].textContent = fmt(L[k]);
+        e.accN.textContent = fmt(L.acc_norm, 2);
+        e.gyroN.textContent = fmt(L.gyro_norm, 2);
+        e.phase.textContent = PHASE_NAMES[L.phase] ?? "—";
+        e.phase.className = "phase inline-block px-3 py-1 rounded-lg font-bold text-[13px] " + (PHASE_BG[L.phase] || PHASE_BG[0]);
       }
     }
-    // drop cards for devices that no longer exist
-    for (const key of Object.keys(cards)) if (!seen.has(key)) removeCard(key);
   } catch (_) { /* transient */ }
-}
-
-function reflectMode(mode) {
-  const on = " bg-[#1f6f3d] border-[#1f6f3d]";
-  for (const [id, m] of [["srcMock", "mock"], ["srcBle", "ble"]]) {
-    const el = $(id);
-    el.className = el.className.replace(on, "");
-    if (mode === m) el.className += on;
-  }
-  const ble = mode === "ble";
-  $("btnScan").disabled = !ble;
-  $("devSel").disabled = !ble;
-  $("devLabel").disabled = !ble;
-  $("btnConnect").disabled = !ble || !$("devSel").value;
 }
 
 async function pollStatus() {
   try {
-    const s = await api("/status").then((r) => r.json());
-    const devs = s.devices || [];
-    const anyLive = Object.values(s.devices_status || {}).some((d) => d.live);
-    setBadge(`${s.mode} · ${devs.length} device(s)`, (s.mode === "mock" || anyLive) ? "live" : "down");
-    // total samples across devices
-    const dstat = s.devices_status || {};
+    const st = await api("/status").then((r) => r.json());
+    const slots = st.slots || {};
+    const dstat = st.devices_status || {};
+    const anyLive = Object.values(dstat).some((d) => d.live);
+    const active = Object.values(slots).filter((s) => s && s.kind !== "none").length;
+    setBadge(`${active} source(s)`, anyLive ? "live" : "down");
     const total = Object.values(dstat).reduce((a, d) => a + (d.count || 0), 0);
     $("meta").textContent = `samples: ${total}`;
-    // per-device ingest health on each card
-    for (const [key, d] of Object.entries(dstat)) {
-      const card = cards[key];
-      if (card) {
-        card.els.meta.textContent =
-          `${d.source_status || ""} · ${d.rate_hz ?? 0}Hz · bad:${d.bad || 0} · lost:${d.lost || 0}`;
+
+    // Dropdown device list = scanned devices ∪ any address already assigned to a slot.
+    const map = new Map();
+    for (const d of (st.scan_devices || [])) map.set(d.address, d.name);
+    for (const slot of SLOTS) {
+      const c = slots[slot];
+      if (c && c.kind === "ble" && c.address && !map.has(c.address)) {
+        map.set(c.address, c.label || "NanoIMU");
       }
     }
-    reflectMode(s.mode);
-    // connected-device chips with disconnect buttons
-    const cl = $("connList");
-    cl.innerHTML = "";
-    devs.forEach((d) => {
-      const chip = document.createElement("span");
-      chip.className = "inline-flex items-center gap-2 bg-[#21262d] border border-[#30363d] rounded-full px-3 py-1 text-[12px]";
-      chip.innerHTML = `<b>${d.label}</b> <span class="text-[#8b949e]">${d.status}</span>`;
-      const x = document.createElement("button");
-      x.textContent = "✕"; x.className = "text-[#8b949e] hover:text-white";
-      x.onclick = () => postJSON("/ble/disconnect", { key: d.key }).then(pollStatus);
-      chip.appendChild(x);
-      cl.appendChild(chip);
-    });
+    bleDevices = [...map.entries()].map(([address, name]) => ({ address, name }));
+    const sig = bleDevices.map((d) => d.address).join(",");
+    if (sig !== lastOptSig) { lastOptSig = sig; renderAllOptions(); }
+
+    // Reflect each slot's configured source + ingest health.
+    for (const slot of SLOTS) {
+      const e = panels[slot].els;
+      const c = slots[slot] || { kind: "none" };
+      const want = slotValueFromConfig(c);
+      if (e.sel.value !== want) e.sel.value = want;
+      const ds = dstat[slot];
+      e.meta.textContent = ds
+        ? `${ds.source_status || ""} · ${ds.rate_hz ?? 0}Hz · bad:${ds.bad || 0} · lost:${ds.lost || 0}`
+        : (c.kind === "none" ? "no source selected" : (c.status || ""));
+    }
   } catch (_) {
     setBadge("server unreachable", "down");
   }
@@ -225,47 +302,24 @@ async function postJSON(path, body) {
   }
 }
 
-$("srcMock").onclick = async () => {
-  $("srcHint").textContent = "switching to mock…";
-  const res = await postJSON("/source", { mode: "mock" });
-  if (res) $("srcHint").textContent = "mock: normal + injured";
-  pollStatus();
-};
-$("srcBle").onclick = async () => {
-  $("srcHint").textContent = "switching to BLE…";
-  const res = await postJSON("/source", { mode: "ble" });
-  if (res) $("srcHint").textContent = "BLE — Scan, pick a device, label it, Connect (repeat to add more)";
-  pollStatus();
-};
 $("btnScan").onclick = async () => {
   $("srcHint").textContent = "scanning…";
   $("btnScan").disabled = true;
-  const res = await postJSON("/ble/scan", { timeout: 6 });
-  if (res) {
-    const devices = res.devices || [];
-    const sel = $("devSel");
-    sel.innerHTML = '<option value="">— select device —</option>';
-    devices.forEach((d) => {
-      const o = document.createElement("option");
-      o.value = d.address; o.textContent = `${d.name}  (${d.address})`;
-      sel.appendChild(o);
-    });
-    $("srcHint").textContent = `found ${devices.length} device(s)`;
-  }
+  const res = await postJSON("/ble/scan", { timeout: 8 });
+  if (res) $("srcHint").textContent = `found ${(res.devices || []).length} device(s)`;
   $("btnScan").disabled = false;
+  pollStatus();   // refresh both dropdowns from the updated scan list
 };
-$("devSel").onchange = () => { $("btnConnect").disabled = !$("devSel").value; };
-$("btnConnect").onclick = async () => {
-  const address = $("devSel").value;
-  if (!address) return;
-  const label = $("devLabel").value.trim() || undefined;
-  $("srcHint").textContent = `connecting ${address}…`;
-  const res = await postJSON("/ble/connect", { address, label });
-  if (res) { $("srcHint").textContent = `added ${label || address}`; $("devLabel").value = ""; }
+$("btnReset").onclick = async () => {
+  const res = await postJSON("/reset", {});
+  if (res) $("srcHint").textContent = "reset to demo pair";
   pollStatus();
 };
 $("btnClear").onclick = () => postJSON("/clear", {});
 
+// ---- boot ----
+for (const s of SLOTS) buildPanel(s);
+renderAllOptions();
 pollData();
 pollStatus();
 setInterval(pollData, 300);

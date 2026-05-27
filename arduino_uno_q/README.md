@@ -1,166 +1,174 @@
-# arduino_uno_q — UNO Q IMU dashboard (Arduino App Lab WebUI Brick)
+# arduino_uno_q — UNO Q IMU dashboard
 
-The UNO Q side of the Smart Cane prototype, built as an **Arduino App Lab app** using two
-official bricks: the **TimeSeriesStore Brick** (`arduino.app_bricks.dbstorage_tsstore`)
-for persistence and the **WebUI Brick** (`arduino.app_bricks.web_ui`) for the dashboard.
-It receives the `NanoIMU` BLE stream on the UNO Q's Linux side, parses it, **writes every
-sample to the time-series DB**, keeps a rolling in-memory buffer, and exposes a REST API
-that the browser dashboard polls (no Socket.IO).
+The UNO Q side of the Smart Cane prototype: an **Arduino App Lab app** that receives the
+`NanoIMU` BLE stream on the UNO Q's Linux side, stores it, and shows a live web dashboard.
+The dashboard has **two fixed compare slots (A / B)** — set each slot's source independently
+to compare two subjects side-by-side (e.g. normal vs injured, or two real Nanos).
 
-**Mock mode works with no Nano**, through the exact same pipeline as BLE mode. (Both
-bricks are provided by App Lab, so the app runs on the UNO Q / in App Lab — not on a
-plain laptop.)
+Uses two App Lab bricks: **WebUI** (`web_ui`) for the dashboard and **TimeSeriesStore**
+(`dbstorage_tsstore`) for persistence. **Mock mode needs no hardware.** Runs on the UNO Q /
+in App Lab only (the bricks aren't importable on a plain laptop).
 
 ## Pipeline
 ```
-                              ┌─ TsStore.write(sample)        # 9 metrics -> TimeSeriesStore brick
-source.lines() -> parse_line ─┤
-   mock / ble                 └─ SampleStore.append(sample)   # in-memory rolling buffer
-
-browser ── polls /api/status /api/latest /api/series every ~300ms ──► WebUI brick (REST)
+NanoIMU --BLE--> source ─> parse ─┬─> SampleStore (per-slot buffer)  ─> dashboard polls /api/* (LIVE)
+   (or mock)                      └─> TimeSeriesStore (batched ~1 s, namespaced <slot>.ax_ms2)
 ```
-Each sample is written to the TimeSeriesStore as 9 separate metrics
-(`ax_ms2, ay_ms2, az_ms2, gx_dps, gy_dps, gz_dps, acc_norm, gyro_norm, phase`) via
-`db.write_sample(metric, value)`. The dashboard **polls** the WebUI brick's REST API
-(no Socket.IO) and reads from the in-memory buffer, so it works regardless of the TS read API.
+**Hot path = live, cold path = history.** The live charts plot from the in-memory `SampleStore`
+(lowest latency); the TimeSeriesStore is a separate **batched** sink for later analysis (the UI
+never reads it back). See the batching caveat under *Notes*.
 
-## Payload contract (matches the Nano firmware)
+## Payload (must match the Nano firmware in ../arduino_nano_33/)
 ```
 IMU,timestamp_ms,ax_ms2,ay_ms2,az_ms2,gx_dps,gy_dps,gz_dps,acc_norm,gyro_norm,phase
 ```
 Phases: `0 UNKNOWN · 1 STATIONARY_OR_ZERO_VELOCITY · 2 GROUND_CONTACT_WITH_ROTATION · 3 SWING_OR_ON_AIR`
 
-## Layout (mirrors the App Lab app)
+## Layout
 ```
-app.yaml                 # bricks: web_ui + dbstorage_tsstore
+app.yaml                 bricks: web_ui + dbstorage_tsstore
 python/
-  config.py  models.py  parser.py        # data model + parsing (no SDK imports)
-  store.py                               # in-memory rolling buffer, status, series, CSV
-  ts_store.py                            # TimeSeriesStore brick: write_sample per metric (SDK here)
-  mock_source.py  ble_receiver.py        # sources (stoppable; mock has normal/altered gaits; BLE by address)
-  registry.py                            # DeviceRegistry: one SampleStore per device (keyed by address)
-  source_manager.py                      # concurrent sources/workers; live add/remove devices
-  webui_server.py                        # WebUI brick: expose_api REST routes (SDK here)
-  main.py                                # initial mode; wire manager + WebUI; App.run()
-sketch/                                  # placeholder MCU sketch — unused (BLE is Linux-side)
-  sketch.ino  sketch.yaml
-assets/
-  index.html  app.js  tailwind.css       # vendored Tailwind (offline) + REST polling;
-                                          # canvas charts: acc_norm, gyro_norm, phase
-tools/tailwind/                          # dev-only: rebuild assets/tailwind.css (not synced)
-  input.css  tailwind.config.js  build.sh
+  config.py models.py parser.py    data model + CSV parsing (no SDK)
+  store.py                         per-slot rolling buffer + stats (rate/bad/lost)
+  registry.py                      DeviceRegistry: one store per slot (keyed "A"/"B")
+  mock_source.py ble_receiver.py   sources (mock normal/injured gaits; direct BLE via bleak)
+  bridge_source.py                 source: read CSV from the host TCP bridge (container)
+  rest_source.py                   source: poll the host REST bridge over HTTP (container)
+  ble_bridge.py                    HOST-side: Nano BLE -> TCP fan-out (run outside the container)
+  source_manager.py                two fixed slots (A/B); set_slot swaps a slot's source live
+  ts_store.py                      TimeSeriesStore brick (SDK)
+  webui_server.py                  WebUI brick: REST routes (SDK)
+  main.py                          dispatch on config.APP_MODE; wire registry + manager + WebUI
+host_bridge/                       HOST-side REST BLE bridge (FastAPI :8787) + systemd unit
+assets/  index.html app.js tailwind.css    dashboard (REST polling, canvas charts, offline Tailwind)
+sketch/  placeholder MCU sketch (unused — BLE is Linux-side)
+tools/tailwind/  dev-only: rebuild assets/tailwind.css (not synced)
 ```
 
-## Run on the UNO Q (App Lab)
-1. Copy `python/` + `assets/` into your App Lab app dir (the board already has its own
-   `sketch/` + `app.yaml` — **don't overwrite the board's `sketch/`**; ours is a placeholder).
-2. In the **Bricks** panel add both bricks: **Web UI** and **Database – Time Series**
-   (installs them + updates `app.yaml`). App Lab then runs `python/main.py`.
-3. Open **`http://<uno-q-ip>:7000/`**. Badge shows the source + status; numbers,
-   phase label, and the 3 charts update live.
+## Run on the UNO Q
+1. In the **Bricks** panel add **Web UI** + **Database – Time Series** (updates `app.yaml`).
+2. Sync `python/` + `assets/` to the app dir (don't overwrite the board's `sketch/`):
+   ```bash
+   ./sync.sh arduino@<uno-q-ip> <APP_DIR>
+   ```
+3. Run in App Lab, open `http://<uno-q-ip>:7000/`.
 
-## Multi-device (compare 2+ Nanos)
-The gateway ingests **several Nanos at once**, keyed by **BLE address**, and shows one
-**column per device** so you can compare (e.g. a *normal* vs an *injured* subject). All
-Nanos still advertise `NanoIMU` (no firmware change) — they're told apart by address.
-- **Mock** spins up two synthetic devices, `normal` + `injured` (different gait cycles), so
-  the compare view works with no hardware.
-- **BLE**: **Scan** → pick a device → optional **label** ("normal"/"injured") → **Connect**;
-  repeat to add more. Each connected device shows as a chip with a ✕ to disconnect.
-- Per-device buffers live in `registry.DeviceRegistry`; concurrent sources/workers in
-  `source_manager.SourceManager`; TimeSeriesStore metrics are namespaced `<key>.ax_ms2`, etc.
+### Runtime mode = `config.APP_MODE` (no CLI flags)
+App Lab's Run button passes no arguments, so the mode is a hardcoded constant in
+`python/config.py` — `python python/main.py` is all that runs. Edit and re-run to switch:
 
-## Choosing the source (mock vs BLE)
-**Live, from the dashboard** — the "Source" card switches **Mock | BLE** and manages BLE
-devices at runtime, no re-run.
+| `APP_MODE`  | What it does | Where it runs |
+| ----------- | ------------ | ------------- |
+| `dashboard` | WebUI + TimeSeriesStore dashboard; applies `STARTUP_SLOTS` (default) | container |
+| `empty`     | dashboard with both slots unbound (add sources from the UI) | container |
+| `scan`      | list nearby BLE devices and exit; no bricks imported | **host** (SSH) |
+| `debug`     | connect to the Nano and print parsed samples + Hz; no bricks | **host** (SSH) |
 
-The **initial** source at startup still follows **`--mode` arg → `MODE` env var →
-`config.DEFAULT_MODE`** (App Lab runs with no args, so set `DEFAULT_MODE`/`MODE` to pick
-where it begins). After boot you can switch freely from the UI.
+`scan`/`debug` need BlueZ, which the App Lab container does **not** have — run them on the UNO
+Q host over SSH. The `scan`/`debug` knobs (`SCAN_TIMEOUT_S`, `DEBUG_ADDRESS`, `DEBUG_SECONDS`)
+live in `config.py` too.
 
-> Scan needs a free BLE adapter, so it's only allowed when **not** BLE-connected (switch to
-> Mock or disconnect first). Selecting BLE with no chosen device auto-finds `NanoIMU` by name.
+### Live BLE needs a host bridge
+The App Lab Python container has **no BlueZ/D-Bus access**, so a live Nano can't be read from
+inside it. Run a host-side bridge (where BlueZ works); pick one with `BLE_TRANSPORT` in
+`config.py`:
+
+| `BLE_TRANSPORT` | Host bridge to run | Container source | Wire |
+| --- | --- | --- | --- |
+| `"bridge"` (default) | `python python/ble_bridge.py` (`:8780`) | `bridge_source.BridgeNanoSource` | raw CSV over TCP, pushed |
+| `"rest"` | `host_bridge/ble_bridge.py` (FastAPI `:8787`) | `rest_source.RestNanoSource` | HTTP JSON, polled |
+| `"direct"` | none — off-container only (laptop + bleak) | `ble_receiver.BleNanoReceiver` | bleak/BlueZ in-process |
+
+```bash
+# transport = "bridge": raw-CSV TCP fan-out
+python python/ble_bridge.py        # on the UNO Q HOST (SSH); Nano BLE -> TCP :8780
+# transport = "rest": FastAPI REST + systemd service  (see host_bridge/README.md)
+python host_bridge/ble_bridge.py   # on the UNO Q HOST; Nano BLE -> HTTP :8787
+```
+Both expose the **same Nano CSV**, so the ingest path is identical. Either way the container
+reaches the host at `172.17.0.1` (the Docker bridge gateway) — `BRIDGE_HOST`/`BRIDGE_PORT` for
+TCP, `REST_BRIDGE_URL` for REST. The REST bridge adds `/status` `/latest` `/samples` `/health`
+for `curl` debugging and ships a `moonwalk-ble-bridge.service` systemd unit; full runbook in
+[`host_bridge/README.md`](host_bridge/README.md).
+
+### Headless / startup config
+Boot applies `STARTUP_SLOTS` in `python/config.py` (default: the mock normal+injured pair, so
+behaviour is unchanged out of the box). To show a real Nano on boot with **no UI**, run the
+host bridge (above) and bind a slot to BLE:
+```python
+# python/config.py  (with BLE_TRANSPORT="bridge")
+STARTUP_SLOTS = {
+    "A": {"kind": "ble"},     # reads the host bridge; "address" is only used in "direct" mode
+    "B": {"kind": "none"},
+}
+```
+Re-run `sync.sh` (or update via App Lab) and Run — the slot connects on boot, retrying every
+2 s until the bridge/Nano appears. `APP_MODE="empty"` starts with no slots; the dashboard can
+still override any slot live. See [`BRINGUP.md`](BRINGUP.md) §1.
+
+### Compare slots (A / B)
+The dashboard shows **two fixed panels**, slot A and slot B. Each panel has its own source
+dropdown — set them independently and mix freely (e.g. slot A a mock baseline, slot B a real
+Nano):
+- Each dropdown offers **— no source —**, **Mock: normal**, **Mock: injured**, and one entry
+  per scanned BLE device. Picking an entry swaps that slot's stream live.
+- **Scan BLE**: with `BLE_TRANSPORT="bridge"` (the UNO Q) the container has no BlueZ, so scan
+  surfaces a single **NanoIMU (via host bridge)** entry — picking it reads `ble_bridge.py` on
+  the host. (Off-container with `BLE_TRANSPORT="direct"`, scan does a real BlueZ discovery and
+  lists nearby Nanos, `NanoIMU` first.)
+- **Reset to demo pair** sets A=normal, B=injured. Startup applies `STARTUP_SLOTS` in
+  `config.py` (defaults to this pair; `APP_MODE="empty"` starts with both slots empty).
+- All Nanos advertise `NanoIMU`; they're told apart by **BLE address** (no firmware change).
 
 ### BLE bring-up
-Full step-by-step runbook (prereqs, BlueZ, expected `[ble]` console log, troubleshooting)
-is in **[`BRINGUP.md`](BRINGUP.md)**. In short: `pip install bleak` on the UNO Q, Bluetooth
-powered on, Nano advertising `NanoIMU` (see `../arduino/BRINGUP.md`), one central at a time;
-expect the badge to go `ble · scanning → ble · connected`.
+Step-by-step (bleak install, BlueZ, expected logs, troubleshooting) → **[`BRINGUP.md`](BRINGUP.md)**.
+The receiver logs each hop `[ble] …`; the manager logs `[ingest:<key>] good=… bad=… rate=…Hz`.
 
-The receiver prints each hop with a `[ble]` prefix, and the manager logs a periodic
-`[ingest:<key>] good=… bad=… rate=…Hz` line per device for headless debugging.
+## REST API (served under `/api/...`)
+| Method | Path | Returns |
+| ------ | ---- | ------- |
+| GET  | `/status` | `{slots:{A:{kind,gait,address,label,status}, B:{…}}, scan_devices, devices_status:{slot:{count,bad,lost,rate_hz,live}}}` |
+| GET  | `/latest` | `{devices:{slot:{…sample…}}}` |
+| GET  | `/series` | `{devices:{slot:{label, rel_ms, t, acc_norm, gyro_norm, phase}}}` (last ~200) |
+| POST | `/slot/set` | `{slot:"A"\|"B", kind:"none"\|"mock"\|"ble", gait?, address?, label?}` → set a slot's source |
+| POST | `/reset` | set both slots to the demo pair (A=normal, B=injured) |
+| POST | `/ble/scan` | `{timeout?}` → `{devices:[{name,address}]}` (NanoIMU first) |
+| POST | `/clear` | clear both slot buffers |
 
-### Data-quality signals (per device, in `/api/status`)
-- **`rate_hz`** — effective sample rate (EWMA); expect ~20 Hz.
-- **`bad`** — payload lines that failed to parse (truncation / MTU / noise).
-- **`lost`** — *estimated* dropped samples, inferred from gaps in the Nano's `timestamp_ms`
-  (no sequence number in the payload → an estimate, not exact).
-- **`rel_ms`** (in `/series`) — a gateway 0-based receive clock shared across devices, so two
-  Nanos (whose own `timestamp_ms` are independent millis-since-boot) compare on one axis.
-  Visual alignment for comparison — not hard real-time sync.
+Reads are keyed by slot ("A"/"B", no query params). POST handlers take the JSON body dict
+(`handler(data)`); GET handlers take `_req=None`. Browser polls `/series`+`/latest` (~300 ms)
+and `/status` (~1 s) — no Socket.IO.
 
-### REST API (exposed via `expose_api`, served under `/api/...`)
-| Method | Path           | Returns |
-| ------ | -------------- | ------- |
-| GET    | `/status`      | `{mode, devices:[{key,label,status}], scan_devices:[…], devices_status:{key:{count,bad,rate_hz,live,…}}}` |
-| GET    | `/latest`      | `{devices: {key: {…sample…}}}` |
-| GET    | `/series`      | `{devices: {key: {label, rel_ms, t, acc_norm, gyro_norm, phase}}}` (last ~200) |
-| POST   | `/clear`       | `{cleared: true, removed: N}` (clears all device buffers) |
-| POST   | `/source`      | body `{mode:"mock"\|"ble"}` (mock = normal+injured pair) |
-| POST   | `/ble/scan`    | body `{timeout?}` → `{devices:[{name,address}]}` |
-| POST   | `/ble/connect` | body `{address, label?}` → **add** a device |
-| POST   | `/ble/disconnect` | body `{key}` → remove one device |
+### Per-device data-quality signals
+- **`rate_hz`** — effective rate (EWMA), ~20 Hz expected.
+- **`bad`** — lines that failed to parse (truncation / MTU / noise).
+- **`lost`** — *estimated* dropped samples from `timestamp_ms` gaps (no seq number → estimate).
+- **`rel_ms`** — gateway 0-based clock shared across devices, so two Nanos (independent
+  millis-since-boot) compare on one time axis. Visual alignment, not hard sync.
 
-Reads are **keyed by device** (no `?device=` query params). POST handlers receive the JSON
-body as a dict (`handler(data)`); GET handlers take `_req=None`.
-
-Updates: the browser **polls** `/api/series` + `/api/latest` (~300 ms) and `/api/status` (~1 s).
-No Socket.IO — keeps the UI dependency-free and robust on the brick.
-
-## Off-device check (no SDK on a laptop)
-The dev extras (`tests/`, `pyproject.toml`) were dropped to match the App Lab layout, so
-sanity-check with the standard library only:
+## Off-device sanity check (no SDK)
 ```bash
-cd arduino_uno_q
-python -m py_compile python/*.py
-cd python && python -c "import config, models, parser, store, ts_store, webui_server, mock_source, ble_receiver, main"
+python -m py_compile python/*.py host_bridge/*.py
+cd python && python -c "import config, models, parser, store, registry, source_manager, ts_store, webui_server, mock_source, rest_source, bridge_source, main"
 ```
-Both should succeed (brick/`bleak` imports are lazy). The brick/BLE behaviour itself can
-only be exercised on the UNO Q.
+Brick/BLE behaviour itself can only be exercised on the UNO Q. The host REST bridge
+(`host_bridge/ble_bridge.py`) needs `fastapi`/`uvicorn`/`bleak` and runs on the host, not here.
 
-## Notes (API confirmed from working App Lab dashboards)
-- Started with **`App.run()`** (`arduino.app_utils`) — starts all bricks (WebUI +
-  TimeSeriesStore). `WebUI()` is constructed before `App.run()` so the brick is registered.
-- `expose_api(method, path, handler)` — register the **full path incl. `/api/`** (the brick
-  does not auto-prefix); handler signature is `handler(_req=None) -> dict`.
-- **No Socket.IO**: the dashboard polls the REST endpoints. This matches the proven
-  community example (philippe86220/uno-q-sensors-webui) and avoids socket.io client
-  serving/vendoring entirely.
-- Static UI is served from `assets/` (entry `index.html`); the `assets/` folder must be
-  added from outside the App Lab IDE (e.g. via `sync.sh`).
-- Styling uses **vendored Tailwind** — `assets/tailwind.css` is a prebuilt, minified file
-  (~8 KB, only the classes actually used) linked via `<link>`. **Fully offline, no CDN.**
-  Rebuild it after changing classes in `index.html`/`app.js`:
-  ```bash
-  cd arduino_uno_q && ./tools/tailwind/build.sh   # runs Tailwind v3 CLI via npx (needs internet once)
-  ```
-  `tools/tailwind/` is dev-only and is **not** synced to the board (only `python/` + `assets/`).
-- shadcn/ui was **not** used — it requires a React build pipeline, not a plain HTML page.
-- Charts are plain `<canvas>` (acc_norm, gyro_norm line charts + a phase step chart),
-  fed from `/api/series`. No charting library.
-
-### TimeSeriesStore
-- `app.yaml` declares both bricks (`arduino:web_ui`, `arduino:dbstorage_tsstore`).
-- `TsStore` uses the confirmed API: `db.start()`, `db.write_sample(metric, value)` ×9 per
-  sample, `db.stop()` on shutdown. Read API also confirmed: `read_last_sample(metric)` and
-  `read_samples(metric, start_from=…, end_to=…)` (ISO8601) — wrapped as `read_last()` /
-  `read_range()` for **future analytics**. The live dashboard still reads from the
-  in-memory `SampleStore` (full samples incl. `phase_label`, lighter than per-metric reads).
-- Sample timestamps use the store's default (server time); we don't pass the Nano's
-  boot-relative `timestamp_ms` as the absolute DB timestamp.
+## Notes
+- Started with `App.run()` (`arduino.app_utils`); `WebUI()` built before it. `expose_api`
+  uses **full `/api/…` paths** (brick doesn't auto-prefix).
+- Tailwind is **vendored offline** (`assets/tailwind.css`, prebuilt). Rebuild after changing
+  classes: `./tools/tailwind/build.sh` (needs internet once). No CDN, no React/shadcn.
+- TimeSeriesStore (cold path): the ingest loop only `enqueue()`s; a background thread flushes
+  to the brick in **batches** every `TS_FLUSH_INTERVAL_S` (~1 s) or once `TS_BATCH_MAX` samples
+  queue (`config.py`). 9 metrics per sample, namespaced `<slot>.ax_ms2`. Read API
+  (`read_last_sample`, `read_samples`) is for future analytics — the dashboard reads the
+  in-memory buffer, never the DB. **Caveat:** batching stamps points at ~flush time, so a DB
+  timestamp can lag the sample by up to one flush interval (fine for trend analysis). Retention
+  is managed by the brick/DB.
+- Live charts plot value-vs-**time** on a 10 s scrolling window (`CHART_WINDOW_MS`), x = the
+  Nano `timestamp_ms`; a time jump > `GAP_MS` breaks the trace so dropouts show as real gaps.
 
 ## Not implemented (by design)
-Nano firmware, Supabase upload, Kalman filter, velocity/distance estimation.
-`SampleStore` / the TimeSeriesStore are the seams for future analytics / Supabase.
-
-> The Nano 33 BLE sender firmware lives in the sibling `../arduino/` folder.
+Nano firmware (in `../arduino_nano_33/`), Supabase upload, Kalman filter, velocity/distance,
+per-device calibration/tare. `SampleStore` / TimeSeriesStore are the seams for future work.

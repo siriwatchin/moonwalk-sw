@@ -15,29 +15,18 @@
     <span id="badge" class="px-3 py-1 rounded-full text-[13px] font-semibold bg-[#30363d]">connecting…</span>
     <span id="meta" class="text-xs text-[#8b949e]"></span>
     <span class="flex-1"></span>
+    <button id="btnScan" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px]">Scan BLE</button>
+    <button id="btnReset" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px]">Reset to demo pair</button>
     <button id="btnClear" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px]">Clear</button>
   </header>
 
-  <main class="p-5 grid gap-[18px] max-w-[1200px]">
-    <section class="bg-[#161b22] border border-[#21262d] rounded-xl p-4">
-      <h2 class="text-[13px] uppercase tracking-wider text-[#8b949e] mb-3">Source</h2>
-      <div class="flex flex-wrap items-center gap-2">
-        <button id="srcMock" class="rounded-lg px-3 py-1.5 text-[13px] border border-[#30363d]">Mock (normal + injured)</button>
-        <button id="srcBle"  class="rounded-lg px-3 py-1.5 text-[13px] border border-[#30363d]">BLE</button>
-        <span class="w-px h-5 bg-[#30363d] mx-1"></span>
-        <button id="btnScan" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px] disabled:opacity-40" disabled>Scan</button>
-        <select id="devSel" class="bg-[#0e1116] border border-[#30363d] rounded-lg px-2 py-1.5 text-[13px] min-w-[200px] disabled:opacity-40" disabled>
-          <option value="">— scan for devices —</option>
-        </select>
-        <input id="devLabel" placeholder="label (e.g. normal)" class="bg-[#0e1116] border border-[#30363d] rounded-lg px-2 py-1.5 text-[13px] w-[150px] disabled:opacity-40" disabled />
-        <button id="btnConnect" class="bg-[#1f6feb] hover:brightness-110 rounded-lg px-3 py-1.5 text-[13px] font-semibold disabled:opacity-40" disabled>Connect</button>
-        <span id="srcHint" class="text-xs text-[#8b949e]"></span>
-      </div>
-      <div id="connList" class="flex flex-wrap gap-2 mt-3"></div>
-    </section>
+  <div class="px-5 pt-3">
+    <div id="srcHint" class="text-xs text-[#8b949e]">Two compare slots — set each slot's source from its own dropdown (mock or a scanned Nano). Click <b>Scan BLE</b> to discover Nanos.</div>
+  </div>
 
-    <!-- One column per device, filled by app.js -->
-    <section id="devices" class="grid gap-[18px] [grid-template-columns:repeat(auto-fit,minmax(340px,1fr))]"></section>
+  <!-- Two fixed compare slots (A / B), built by app.js into #panels. -->
+  <main class="p-5">
+    <section id="panels" class="grid gap-[18px] [grid-template-columns:repeat(auto-fit,minmax(380px,1fr))]"></section>
   </main>
 
   <!-- Pure REST polling (no Socket.IO) — app.js polls /api/* on the WebUI brick. -->
