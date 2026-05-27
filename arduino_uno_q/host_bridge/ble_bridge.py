@@ -53,10 +53,6 @@ def build_record(sample, raw: str, seq: int) -> dict:
         "timestamp_ms": sample.timestamp_ms,
         "ax_ms2": sample.ax, "ay_ms2": sample.ay, "az_ms2": sample.az,
         "gx_dps": sample.gx, "gy_dps": sample.gy, "gz_dps": sample.gz,
-        "acc_norm": sample.acc_norm,
-        "gyro_norm": sample.gyro_norm,
-        "phase": sample.phase,
-        "phase_label": sample.phase_label,
         "received_at": time.time(),
         "csv": raw.strip(),
     }

@@ -43,15 +43,11 @@ REST_POLL_INTERVAL_S = 0.3    # container poll cadence (spec's 250-500 ms band)
 # values here. Re-export so downstream modules keep importing them from `config`.
 # `INTERVAL_MS` is the local alias for the contract's SEND_INTERVAL_MS.
 from ble_contract import (  # noqa: E402,F401
-    ACC_NEAR_G_THRESHOLD,
     CHAR_UUID,
     DEVICE_NAME,
     FIELD_COUNT,
     GRAVITY,
-    GYRO_SWING_THRESHOLD,
-    GYRO_ZERO_THRESHOLD,
     PAYLOAD_TAG,
-    PHASE_LABELS,
     SERVICE_UUID,
 )
 from ble_contract import SEND_INTERVAL_MS as INTERVAL_MS  # noqa: E402,F401

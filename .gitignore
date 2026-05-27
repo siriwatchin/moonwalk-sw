@@ -16,3 +16,4 @@ venv/
 
 # Build / archive artifacts
 hardware.zip
+*.md

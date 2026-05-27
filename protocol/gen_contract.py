@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Generate the NanoIMU BLE contract into every consumer from one source of truth.
 
-The BLE contract (device name, UUIDs, notify interval, gravity, payload layout, phase codes,
-phase thresholds) used to be hand-copied across the firmware and two Python modules — a silent
-drift hazard. Now `protocol/ble_contract.json` is the single source; this script renders it into:
+The BLE contract (device name, UUIDs, notify interval, gravity, payload layout) used to be
+hand-copied across the Python modules — a silent drift hazard. Now `protocol/ble_contract.json`
+is the single source; this script renders it into the Python consumers:
 
-  - arduino_nano_33/ble_contract.h        (firmware: #include'd by nano_imu_ble_sender.ino)
   - arduino_uno_q/python/ble_contract.py  (dashboard: re-exported by config.py)
   - arduino_nano_33/ble_contract_gen.py   (Nano dev tools: imported by imu_payload.py)
+
+(The firmware `nano_imu_ble_sender.ino` inlines these constants directly — keep them in sync
+with this JSON by hand.)
 
 Usage:
   python3 protocol/gen_contract.py            # (re)write the generated files
   python3 protocol/gen_contract.py --check    # exit 1 if any generated file is stale (drift)
 
-Pure stdlib. UUIDs are stored lowercase in JSON and emitted uppercase in the C header to match
-the firmware's historical style (BLE UUIDs are case-insensitive).
+Pure stdlib. UUIDs are stored (and emitted) lowercase; the firmware inlines them uppercase by
+hand (BLE UUIDs are case-insensitive).
 """
 
 from __future__ import annotations
@@ -36,36 +38,7 @@ def _load() -> dict:
         return json.load(f)
 
 
-def _phase_items(spec: dict) -> list[tuple[int, str]]:
-    return sorted(((int(k), v) for k, v in spec["phase_codes"].items()), key=lambda kv: kv[0])
-
-
-def render_header(spec: dict) -> str:
-    t = spec["thresholds"]
-    lines = [
-        f"// {_BANNER}",
-        "#pragma once",
-        "",
-        f'static const char* DEVICE_NAME  = "{spec["device_name"]}";',
-        f'static const char* SERVICE_UUID = "{spec["service_uuid"].upper()}";',
-        f'static const char* CHAR_UUID    = "{spec["char_uuid"].upper()}";',
-        "",
-        f"const float         GRAVITY          = {spec['gravity']!r}f;",
-        f"const unsigned long SEND_INTERVAL_MS = {int(spec['send_interval_ms'])};",
-        "",
-        "// Phase classification thresholds",
-        f"const float ACC_NEAR_G_THRESHOLD = {t['acc_near_g']!r}f;  // m/s^2",
-        f"const float GYRO_ZERO_THRESHOLD  = {t['gyro_zero']!r}f;   // deg/s",
-        f"const float GYRO_SWING_THRESHOLD = {t['gyro_swing']!r}f;  // deg/s",
-        "",
-    ]
-    return "\n".join(lines)
-
-
 def render_python(spec: dict) -> str:
-    t = spec["thresholds"]
-    phase = _phase_items(spec)
-    phase_block = "\n".join(f'    {code}: "{label}",' for code, label in phase)
     fields = ", ".join(f'"{f}"' for f in spec["fields"])
     lines = [
         f'"""{_BANNER}"""',
@@ -81,15 +54,6 @@ def render_python(spec: dict) -> str:
         f"FIELDS = [{fields}]",
         "FIELD_COUNT = len(FIELDS) + 1  # +1 for the leading payload tag",
         "",
-        "PHASE_LABELS = {",
-        phase_block,
-        "}",
-        "",
-        "# Phase classification thresholds (shared by firmware + mock).",
-        f"ACC_NEAR_G_THRESHOLD = {t['acc_near_g']!r}",
-        f"GYRO_ZERO_THRESHOLD = {t['gyro_zero']!r}",
-        f"GYRO_SWING_THRESHOLD = {t['gyro_swing']!r}",
-        "",
     ]
     return "\n".join(lines)
 
@@ -98,7 +62,6 @@ def render_python(spec: dict) -> str:
 def _targets(spec: dict) -> dict[Path, str]:
     py = render_python(spec)
     return {
-        ROOT / "arduino_nano_33" / "ble_contract.h": render_header(spec),
         ROOT / "arduino_uno_q" / "python" / "ble_contract.py": py,
         ROOT / "arduino_nano_33" / "ble_contract_gen.py": py,
     }

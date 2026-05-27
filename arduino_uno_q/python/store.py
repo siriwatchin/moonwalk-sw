@@ -17,7 +17,6 @@ from models import ImuSample
 
 _CSV_FIELDS = [
     "timestamp_ms", "ax", "ay", "az", "gx", "gy", "gz",
-    "acc_norm", "gyro_norm", "phase", "phase_label",
 ]
 
 
@@ -126,9 +125,6 @@ class SampleStore:
             "gx": [round(s.gx, 4) for s in samples],
             "gy": [round(s.gy, 4) for s in samples],
             "gz": [round(s.gz, 4) for s in samples],
-            "acc_norm": [round(s.acc_norm, 4) for s in samples],
-            "gyro_norm": [round(s.gyro_norm, 4) for s in samples],
-            "phase": [s.phase for s in samples],
         }
 
     def status(self) -> dict:

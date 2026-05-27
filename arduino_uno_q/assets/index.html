@@ -1,44 +1,53 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Smart Cane — UNO Q IMU</title>
 
+  <!-- Apply the saved theme before first paint (avoids a flash). Default: light. -->
+  <script>
+    if ((localStorage.getItem("theme") || "light") === "dark") {
+      document.documentElement.classList.add("dark");
+    }
+  </script>
+
   <!-- Vendored Tailwind (offline, no CDN). Rebuild with tools/tailwind/build.sh after
        adding new Tailwind classes to this file or app.js. -->
   <link rel="stylesheet" href="tailwind.css" />
 </head>
-<body class="bg-[#0e1116] text-[#e6edf3] font-sans min-h-screen">
-  <header class="flex items-center gap-4 px-5 py-3 border-b border-[#222]">
+<body class="bg-[var(--bg)] text-[var(--text)] font-sans min-h-screen lg:h-screen lg:overflow-hidden flex flex-col">
+  <header class="flex flex-wrap items-center gap-2 sm:gap-4 px-3 sm:px-5 py-3 border-b border-[var(--border)] shrink-0">
     <h1 class="text-lg font-semibold m-0">🦯 Smart Cane — UNO Q</h1>
     <!-- Tab nav: this app is the realtime (raw-sample) view only; analysis is a separate
          page that reads the TimeSeriesStore, not yet built here. -->
     <nav class="flex items-center gap-1 ml-2">
-      <span class="px-3 py-1 rounded-lg text-[13px] font-semibold bg-[#21262d] border border-[#30363d]">Realtime</span>
-      <span class="px-3 py-1 rounded-lg text-[13px] text-[#6e7681] cursor-not-allowed" title="coming soon">Analysis</span>
+      <span class="px-3 py-1 rounded-lg text-[13px] font-semibold bg-[var(--badge)] border border-[var(--border)]">Realtime</span>
+      <span class="px-3 py-1 rounded-lg text-[13px] text-[var(--faint)] cursor-not-allowed" title="coming soon">Analysis</span>
     </nav>
     <!-- Slot switch: one slot shown full-width at a time (both stay bound in the backend). -->
     <div id="slotTabs" class="flex items-center gap-1 ml-2">
-      <span class="text-xs text-[#8b949e] mr-1">Slot</span>
-      <button data-slot="A" class="slot-tab px-3 py-1 rounded-lg text-[13px] font-semibold border border-[#30363d]">A</button>
-      <button data-slot="B" class="slot-tab px-3 py-1 rounded-lg text-[13px] font-semibold border border-[#30363d]">B</button>
+      <span class="text-xs text-[var(--muted)] mr-1">Slot</span>
+      <button data-slot="A" class="slot-tab px-3 py-1 rounded-lg text-[13px] font-semibold border border-[var(--border)]">A</button>
+      <button data-slot="B" class="slot-tab px-3 py-1 rounded-lg text-[13px] font-semibold border border-[var(--border)]">B</button>
     </div>
-    <span id="badge" class="px-3 py-1 rounded-full text-[13px] font-semibold bg-[#30363d]">connecting…</span>
-    <span id="meta" class="text-xs text-[#8b949e]"></span>
+    <span id="badge" class="px-3 py-1 rounded-full text-[13px] font-semibold bg-[var(--badge)]">connecting…</span>
+    <span id="meta" class="text-xs text-[var(--muted)]"></span>
     <span class="flex-1"></span>
-    <button id="btnScan" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px]">Scan BLE</button>
-    <button id="btnReset" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px]">Reset to demo pair</button>
-    <button id="btnClear" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px]">Clear</button>
+    <button id="btnTheme" class="bg-[var(--btn)] hover:bg-[var(--btn-hover)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-[13px]" title="Toggle light/dark">🌙</button>
+    <button id="btnScan" class="bg-[var(--btn)] hover:bg-[var(--btn-hover)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-[13px]">Scan BLE</button>
+    <button id="btnReset" class="bg-[var(--btn)] hover:bg-[var(--btn-hover)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-[13px]">Reset to demo pair</button>
+    <button id="btnClear" class="bg-[var(--btn)] hover:bg-[var(--btn-hover)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-[13px]">Clear</button>
   </header>
 
-  <div class="px-5 pt-3">
-    <div id="srcHint" class="text-xs text-[#8b949e]">Realtime raw IMU — set each slot's source from its dropdown (mock or a scanned Nano). Click <b>Scan BLE</b> to discover Nanos.</div>
+  <div class="px-3 sm:px-5 pt-2 shrink-0">
+    <div id="srcHint" class="text-xs text-[var(--muted)]">Realtime raw IMU — set each slot's source from its dropdown (mock or a scanned Nano). Click <b>Scan BLE</b> to discover Nanos.</div>
   </div>
 
-  <!-- Two fixed compare slots (A / B), built by app.js into #panels. -->
-  <main class="p-5">
-    <section id="panels" class="grid gap-[18px] grid-cols-1 max-w-3xl mx-auto"></section>
+  <!-- One slot shown at a time. On large screens its 9 charts fill the viewport as a 3×3 grid
+       (no scroll); on smaller screens they reflow to 2 / 1 columns and the page scrolls. -->
+  <main class="flex-1 min-h-0 p-2 sm:p-3">
+    <section id="panels" class="grid grid-cols-1 lg:h-full"></section>
   </main>
 
   <!-- Vendored Chart.js (offline, no CDN — same policy as tailwind.css). Realtime line charts. -->

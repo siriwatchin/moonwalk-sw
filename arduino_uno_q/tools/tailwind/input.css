@@ -1,3 +1,41 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Theme palette as CSS variables. The whole UI references var(--…) (via Tailwind arbitrary
+   values like bg-[var(--bg)]); toggling the `.dark` class on <html> flips every colour at once.
+   Chart.js reads --chart-* in app.js so canvas charts re-theme together. */
+@layer base {
+  :root {
+    --bg: #ffffff;
+    --panel: #f6f8fa;
+    --text: #1f2328;
+    --muted: #57606a;
+    --faint: #8c959f;
+    --border: #d0d7de;
+    --btn: #f6f8fa;
+    --btn-hover: #eaeef2;
+    --badge: #eaeef2;
+    --live: #1a7f37;
+    --down: #cf222e;
+    --chart-grid: #d8dee4;
+    --chart-tick: #8c959f;
+    --chart-baseline: #afb8c1;
+  }
+  .dark {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --faint: #6e7681;
+    --border: #30363d;
+    --btn: #21262d;
+    --btn-hover: #30363d;
+    --badge: #30363d;
+    --live: #2ea043;
+    --down: #f85149;
+    --chart-grid: #21262d;
+    --chart-tick: #6e7681;
+    --chart-baseline: #30363d;
+  }
+}

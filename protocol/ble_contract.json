@@ -9,19 +9,6 @@
   "fields": [
     "timestamp_ms",
     "ax", "ay", "az",
-    "gx", "gy", "gz",
-    "acc_norm", "gyro_norm",
-    "phase"
-  ],
-  "phase_codes": {
-    "0": "UNKNOWN",
-    "1": "STATIONARY_OR_ZERO_VELOCITY",
-    "2": "GROUND_CONTACT_WITH_ROTATION",
-    "3": "SWING_OR_ON_AIR"
-  },
-  "thresholds": {
-    "acc_near_g": 0.30,
-    "gyro_zero": 2.0,
-    "gyro_swing": 25.0
-  }
+    "gx", "gy", "gz"
+  ]
 }

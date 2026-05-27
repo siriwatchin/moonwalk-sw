@@ -11,7 +11,6 @@ Checks:
   - every notification parses as a valid IMU payload
   - effective rate is ~20 Hz (50 ms interval)
   - timestamp_ms is strictly increasing
-  - phase is always one of {0,1,2,3}
 
 Usage (from a Mac/PC with BLE):
     pip install -r requirements.txt
@@ -24,7 +23,7 @@ import sys
 import time
 
 from bleak import BleakClient, BleakScanner
-from imu_payload import CHAR_UUID, DEVICE_NAME, PHASE_LABELS, parse_payload
+from imu_payload import CHAR_UUID, DEVICE_NAME, parse_payload
 
 # Acceptance window for the effective sample rate (target 20 Hz).
 RATE_MIN_HZ = 12.0
@@ -43,7 +42,6 @@ async def collect(duration_s: float) -> dict:
         "found": True,
         "good": 0,
         "bad": 0,
-        "phase_hist": {code: 0 for code in PHASE_LABELS},
         "last_ts": None,
         "ts_monotonic": True,
     }
@@ -55,7 +53,6 @@ async def collect(duration_s: float) -> dict:
             stats["bad"] += 1
             return
         stats["good"] += 1
-        stats["phase_hist"][sample["phase"]] = stats["phase_hist"].get(sample["phase"], 0) + 1
         ts = sample["timestamp_ms"]
         if stats["last_ts"] is not None and ts <= stats["last_ts"]:
             stats["ts_monotonic"] = False
@@ -86,9 +83,6 @@ def report(stats: dict) -> bool:
     print(f"bad frames  : {bad}")
     print(f"rate        : {rate:.1f} Hz (over {elapsed:.1f}s)")
     print(f"ts increasing: {stats['ts_monotonic']}")
-    print("phase histogram:")
-    for code, label in PHASE_LABELS.items():
-        print(f"  {code} {label:<28} {stats['phase_hist'].get(code, 0)}")
 
     checks = {
         "received frames": good > 0,

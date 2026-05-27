@@ -31,8 +31,6 @@ from models import ImuSample
 _METRIC_MAP = {
     "ax": "ax_ms2", "ay": "ay_ms2", "az": "az_ms2",
     "gx": "gx_dps", "gy": "gy_dps", "gz": "gz_dps",
-    "acc_norm": "acc_norm", "gyro_norm": "gyro_norm",
-    "phase": "phase",
 }
 
 _QUEUE_CAP = TS_BATCH_MAX * 8   # drop-guard if the DB stalls (live view is unaffected)

@@ -8,17 +8,5 @@ SEND_INTERVAL_MS = 50
 GRAVITY = 9.80665
 PAYLOAD_TAG = "IMU"
 
-FIELDS = ["timestamp_ms", "ax", "ay", "az", "gx", "gy", "gz", "acc_norm", "gyro_norm", "phase"]
+FIELDS = ["timestamp_ms", "ax", "ay", "az", "gx", "gy", "gz"]
 FIELD_COUNT = len(FIELDS) + 1  # +1 for the leading payload tag
-
-PHASE_LABELS = {
-    0: "UNKNOWN",
-    1: "STATIONARY_OR_ZERO_VELOCITY",
-    2: "GROUND_CONTACT_WITH_ROTATION",
-    3: "SWING_OR_ON_AIR",
-}
-
-# Phase classification thresholds (shared by firmware + mock).
-ACC_NEAR_G_THRESHOLD = 0.3
-GYRO_ZERO_THRESHOLD = 2.0
-GYRO_SWING_THRESHOLD = 25.0

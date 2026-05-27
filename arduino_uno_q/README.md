@@ -20,9 +20,10 @@ never reads it back). See the batching caveat under *Notes*.
 
 ## Payload (must match the Nano firmware in ../arduino_nano_33/)
 ```
-IMU,timestamp_ms,ax_ms2,ay_ms2,az_ms2,gx_dps,gy_dps,gz_dps,acc_norm,gyro_norm,phase
+IMU,timestamp_ms,ax_ms2,ay_ms2,az_ms2,gx_dps,gy_dps,gz_dps
 ```
-Phases: `0 UNKNOWN · 1 STATIONARY_OR_ZERO_VELOCITY · 2 GROUND_CONTACT_WITH_ROTATION · 3 SWING_OR_ON_AIR`
+Raw 6-axis only — no norms or phase classification on the wire (any feature extraction is a
+downstream concern).
 
 ## Layout
 ```
@@ -129,15 +130,17 @@ The receiver logs each hop `[ble] …`; the manager logs `[ingest:<key>] good=�
 | ------ | ---- | ------- |
 | GET  | `/status` | `{slots:{A:{kind,gait,address,label,status}, B:{…}}, scan_devices, devices_status:{slot:{count,bad,lost,rate_hz,live}}}` |
 | GET  | `/latest` | `{devices:{slot:{…sample…}}}` |
-| GET  | `/series` | `{devices:{slot:{label, rel_ms, t, acc_norm, gyro_norm, phase}}}` (last ~200) |
+| GET  | `/series` | `{devices:{slot:{label, rel_ms, t, ax, ay, az, gx, gy, gz}}}` (last ~200) |
+| GET  | `/export` | `?slot=A\|B` → the slot's rolling buffer (~30 s) as a `text/csv` download (`Content-Disposition` filename) |
 | POST | `/slot/set` | `{slot:"A"\|"B", kind:"none"\|"mock"\|"ble", gait?, address?, label?}` → set a slot's source |
 | POST | `/reset` | set both slots to the demo pair (A=normal, B=injured) |
 | POST | `/ble/scan` | `{timeout?}` → `{devices:[{name,address}]}` (NanoIMU first) |
 | POST | `/clear` | clear both slot buffers |
 
-Reads are keyed by slot ("A"/"B", no query params). POST handlers take the JSON body dict
-(`handler(data)`); GET handlers take `_req=None`. Browser polls `/series`+`/latest` (~300 ms)
-and `/status` (~1 s) — no Socket.IO.
+`expose_api` hands the handler straight to FastAPI's `add_api_route`, so the handler signature
+IS the FastAPI signature: POST bodies must be declared with `Body()` (e.g. `data: dict =
+Body(default=None)`) or the JSON body is dropped; query params (like `/export?slot=`) are plain
+typed defaults. Browser polls `/series`+`/latest` (~300 ms) and `/status` (~1 s) — no Socket.IO.
 
 ### Per-device data-quality signals
 - **`rate_hz`** — effective rate (EWMA), ~20 Hz expected.

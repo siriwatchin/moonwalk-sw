@@ -139,9 +139,7 @@ async def debug_stream(device, seconds: float | None) -> None:
             stats["win_good"] += 1
             _dbg(f"OK   ts={sample.timestamp_ms} "
                  f"ax={sample.ax:+.3f} ay={sample.ay:+.3f} az={sample.az:+.3f} "
-                 f"gx={sample.gx:+.2f} gy={sample.gy:+.2f} gz={sample.gz:+.2f} "
-                 f"acc_norm={sample.acc_norm:.3f} gyro_norm={sample.gyro_norm:.3f} "
-                 f"phase={sample.phase}({sample.phase_label})")
+                 f"gx={sample.gx:+.2f} gy={sample.gy:+.2f} gz={sample.gz:+.2f}")
 
         now = time.monotonic()
         elapsed = now - stats["last_report"]
