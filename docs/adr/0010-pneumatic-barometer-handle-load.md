@@ -133,14 +133,24 @@ bench-calibrated against a reference scale, and drift/hysteresis-validated.** Th
 entire WSFC loading stack (CONTEXT.md, `docs/metrics.md` §3 — Handle Load + WS Target Compliance
 move from *gated* to *available*).
 
-**To record from the bench results** (these replace the projected numbers in the rationale above
-— do not leave them as projections):
-- the fitted **pressure→load polynomial** (`a, b, c`) and its R²;
-- the **measured usable load span** and whether the top of the 7–35 kgf range **saturates**
-  (the open question above) — and the bladder area actually used;
-- the **measured drift / hysteresis %** over a ~30-min session window, vs the Dabling-2012
-  projection (2.3% static / 2.8% hysteresis), confirming the session-start tare suffices;
-- the **seal / leak** result (squeeze-hold ≥10 s).
+**Bench results — to be filled in** (these supersede the projected numbers in the rationale
+above; replace each `TODO` with the measured value and date, then delete this note):
+
+| What | Projected / assumed (rationale above) | Measured (TODO) | Pass? |
+|---|---|---|---|
+| Calibration polynomial `a, b, c` | 2nd-order, Marquardt-2022 R²≈0.996 | `TODO` (a=…, b=…, c=…; R²=…) | `TODO` |
+| Bladder area used | 25–35 cm² | `TODO` cm² | — |
+| Usable load span | target 7–35 kgf | `TODO` kgf | `TODO` |
+| Top-of-range **saturation** (open Q) | may saturate (~4.4× ceiling, ~110 kPa) | `TODO` (yes/no, at … kgf) | `TODO` |
+| Static drift (~30-min session) | 2.3% (Dabling 2012, 18 h scaled) | `TODO` % | `TODO` (≤ session budget?) |
+| Hysteresis | 2.8% (Dabling 2012) | `TODO` % | `TODO` |
+| Repeatable relative-trend accuracy | ~10–20% goal | `TODO` % | `TODO` |
+| Seal / leak (squeeze-hold ≥10 s) | undocumented in literature | `TODO` (pass/fail, held … s) | `TODO` |
+| Session-start tare sufficient? | yes (drift cancels in ratio) | `TODO` (confirmed / re-zero needed) | `TODO` |
+
+Once filled: if drift/hysteresis land within the session budget and the polynomial hits the
+~10–20% goal, the DSP load path is sufficient and **[ADR-0012] #2 (the ML load denoiser) is not
+built** — record that outcome there too.
 
 ## Status
 
