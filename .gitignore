@@ -16,3 +16,6 @@ venv/
 
 # Build / archive artifacts
 hardware.zip
+.env
+.netlify/
+.claude/

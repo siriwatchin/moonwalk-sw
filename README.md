@@ -1,13 +1,15 @@
-# Moon Walk Software
+# Moon Walk
 
-Moon Walk is an attachable sensor box for an ordinary walking stick or walker.
-This repository contains the early software pieces for collecting motion data,
-labeling cane-posture samples, and preparing datasets for later gait trend
-analysis.
+> Turn any cane into a **Weight Support Feedback Cane**.
 
-Moon Walk is a wellness self-monitoring product. It measures and trends gait
-signals for user awareness; it does not diagnose, treat, predict disease, or
-predict fall risk.
+A clip-on sensor (IMU + a pneumatic barometer Handle-Load sensor) that instruments an
+existing walking aid. Its flagship application is the **WSFC** — real-time biofeedback that
+retrains a rehab patient to load the affected leg instead of over-leaning on the cane. The
+same sensor also runs wellness gait monitoring and a see-and-speak Speaking Stick.
+
+- **What it is / does:** [`CONTEXT.md`](./CONTEXT.md) · [`docs/PRD.md`](./docs/PRD.md) · [`docs/FEATURES.md`](./docs/FEATURES.md)
+- **Why (decisions):** [`docs/adr/`](./docs/adr) — esp. [ADR-0009](./docs/adr/0009-pivot-to-weight-support-feedback-cane.md) (WSFC pivot), [ADR-0010](./docs/adr/0010-pneumatic-barometer-handle-load.md) (barometer Handle Load)
+- **Clinical evidence:** [`rehab/`](./rehab)
 
 ## Repository Layout
 
@@ -149,28 +151,4 @@ uv run python -m unittest discover -s python/tests
 
 cd ..\collection_interface
 uv run python -m unittest discover -s tests
-```
-
-## Safety Language
-
-Use the vocabulary in `CONTEXT.md` and `docs/adr/0005-*` for UI and docs.
-
-Say:
-
-- wellness cue
-- self-monitoring
-- behavior awareness
-- "your walking has changed"
-
-Avoid:
-
-- diagnosis
-- treatment
-- fall risk
-- "your condition is worsening"
-
-Every dashboard or alert-like surface should carry the disclaimer:
-
-```text
-a wellness awareness cue, not a medical assessment
 ```
