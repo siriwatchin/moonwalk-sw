@@ -83,7 +83,7 @@ with these; spatial metrics are secondary trends.
 
 ### 1.3 Stick Duty Factor
 - **Sensor & derivation:** IMU stillness window (cane planted ≈ stationary) ÷ cycle time. Becomes
-  crisper at the plant/lift edges once the Handle Load sensor confirms "loaded."
+  crisper at the plant/lift edges now that the Handle Load sensor (built & validated, [ADR-0010]) confirms "loaded."
 - **Formula:** `duty_factor = planted_duration / cycle_time`
 - **Tier / status:** Tier 1 · **live** (IMU-inferred).
 - **Why we need it:** a stand-in for how long the patient leans on the cane within each cycle — an
@@ -121,7 +121,7 @@ trend-only for us).
 
 ---
 
-## 3. Loading metrics — Tier 3 (the WSFC's headline signals; gated on the Handle Load sensor)
+## 3. Loading metrics — Tier 3 (the WSFC's headline signals; powered by the now-built Handle Load sensor)
 
 These are what makes Moon Walk a **Weight Support Feedback Cane** rather than a pedometer. Both are
 now unblocked — the pneumatic bladder is built, bench-calibrated, and drift/hysteresis-validated ([ADR-0010]).
@@ -177,7 +177,7 @@ clinician a progress summary. All self-referenced to the patient's own baseline.
 - **Claim-safety:** CV is surfaced as "step-timing **consistency / steadiness**," **never** as fall
   risk (a banned framing). A trend toward SR = 1.0 / lower CV vs the patient's own baseline.
 
-### 4.2 Session Weight-Support Training Load  ①  — **gated; the Whoop-Strain analog**
+### 4.2 Session Weight-Support Training Load  ①  — **available; the Whoop-Strain analog**
 - **Sensor & derivation:** barometer (relative load) + IMU (steps/duration). Integrate
   loading-quality over the session and map to a personalised non-linear 0–100.
 - **Formula:**
@@ -192,7 +192,7 @@ clinician a progress summary. All self-referenced to the patient's own baseline.
   to Whoop Strain (whose algorithm is proprietary and unvalidated — only Whoop's HR/HRV/sleep
   *signals* are validated, Miller 2022). Not a clinical grade; relative to own baseline.
 
-### 4.3 Cane-Reliance & Walk-Ratio Trend  ③  — **gated; partly speculative**
+### 4.3 Cane-Reliance & Walk-Ratio Trend  ③  — **available; partly speculative**
 - **Sensor & derivation:** barometer (reliance) over weeks + IMU (stride-proxy, cadence). 
 - **Formula:**
   `cane_reliance = mean(load%) per session, trended week-over-week`  (↓ = weaning off the cane)
