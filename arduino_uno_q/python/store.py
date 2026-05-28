@@ -12,13 +12,26 @@ import threading
 import time
 from collections import deque
 
-from config import INTERVAL_MS, RECENT_POINTS
+from config import INTERVAL_MS, RECENT_POINTS, SAMPLES_LIMIT_MAX
 from models import ImuSample
 
 _CSV_FIELDS = [
-    "timestamp_ms", "ax", "ay", "az", "gx", "gy", "gz",
-    "acc_norm", "gyro_norm", "phase", "phase_label",
+    "timestamp_ms", "ax", "ay", "az", "gx", "gy", "gz", "pressure",
 ]
+
+
+def to_csv(samples: list[ImuSample]) -> str:
+    """Render IMU samples to a CSV string (header + one row per sample).
+
+    Shared by SampleStore.to_csv (rolling buffer), DeviceRegistry.csv (per-slot export),
+    and the Recorder (start→stop session capture) so the column layout stays in one place.
+    """
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=_CSV_FIELDS)
+    w.writeheader()
+    for s in samples:
+        w.writerow(s.to_dict())
+    return buf.getvalue()
 
 
 class SampleStore:
@@ -28,6 +41,11 @@ class SampleStore:
         # a clock common to all devices, so two Nanos can be compared on one time axis
         # (their own timestamp_ms are independent millis-since-boot).
         self._recv: deque[int] = deque(maxlen=maxlen)
+        # Monotonic per-accepted-sample sequence number, parallel to _dq (one entry per sample).
+        # Lets the browser fetch only samples newer than a `since_seq` (incremental realtime path)
+        # and detect gaps. Kept here (not on ImuSample) so the parser/CSV/wire format stay untouched.
+        self._seq: deque[int] = deque(maxlen=maxlen)
+        self._seq_counter = 0      # last assigned seq (0 = nothing appended yet)
         self._t0 = None            # monotonic of first sample
         self._lock = threading.Lock()
         self._status = "starting"
@@ -81,6 +99,8 @@ class SampleStore:
                     self._lost += max(0, round(gap / INTERVAL_MS) - 1)
             self._last_ts = ts
             self._dq.append(sample)
+            self._seq_counter += 1
+            self._seq.append(self._seq_counter)   # parallel to _dq; same maxlen drops oldest together
             self._count += 1
             self._last_recv = now
 
@@ -94,6 +114,8 @@ class SampleStore:
             n = len(self._dq)
             self._dq.clear()
             self._recv.clear()
+            self._seq.clear()
+            self._seq_counter = 0    # restart the sequence; the browser detects this as a reset
             self._t0 = None
             self._last_ts = None
             self._lost = 0
@@ -126,10 +148,61 @@ class SampleStore:
             "gx": [round(s.gx, 4) for s in samples],
             "gy": [round(s.gy, 4) for s in samples],
             "gz": [round(s.gz, 4) for s in samples],
-            "acc_norm": [round(s.acc_norm, 4) for s in samples],
-            "gyro_norm": [round(s.gyro_norm, 4) for s in samples],
-            "phase": [s.phase for s in samples],
+            "pressure": [round(s.pressure, 1) for s in samples],
         }
+
+    def samples_since(self, since_seq=None, limit: int = RECENT_POINTS) -> dict:
+        """Incremental realtime read: samples with seq > since_seq (the hot path the browser polls).
+
+        Reads the in-memory buffer only — never the TimeSeriesStore/InfluxDB. Robust to junk
+        params (never raises): a non-int since_seq is treated as None, limit is clamped.
+
+        Returns {"latest_seq", "samples":[{seq,t,ax,ay,az,gx,gy,gz,pressure}], "reset"?}:
+          - since_seq is None        -> latest window (initial load)
+          - since_seq >= latest_seq  -> no new samples ([])
+          - since_seq ahead of us (source restarted) or older than the buffer holds
+                                     -> "reset": True + latest window
+          - otherwise                -> only samples newer than since_seq (up to limit)
+        """
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = RECENT_POINTS
+        limit = max(1, min(limit, SAMPLES_LIMIT_MAX))
+        if since_seq is not None:
+            try:
+                since_seq = int(since_seq)
+            except (TypeError, ValueError):
+                since_seq = None
+
+        with self._lock:
+            seqs = list(self._seq)
+            samples = list(self._dq)
+            latest = self._seq_counter
+
+        def pack(samp, sq):
+            return [{
+                "seq": q, "t": s.timestamp_ms,
+                "ax": round(s.ax, 4), "ay": round(s.ay, 4), "az": round(s.az, 4),
+                "gx": round(s.gx, 4), "gy": round(s.gy, 4), "gz": round(s.gz, 4),
+                "pressure": round(s.pressure, 1),
+            } for s, q in zip(samp, sq)]
+
+        if not seqs:
+            return {"latest_seq": latest, "samples": []}
+        oldest = seqs[0]
+
+        if since_seq is None:
+            return {"latest_seq": latest, "samples": pack(samples[-limit:], seqs[-limit:])}
+        if since_seq > latest or since_seq < oldest - 1:   # client ahead (restart) / fell behind buffer
+            return {"latest_seq": latest, "reset": True,
+                    "samples": pack(samples[-limit:], seqs[-limit:])}
+        if since_seq >= latest:                            # caught up — nothing new
+            return {"latest_seq": latest, "samples": []}
+        # seqs are contiguous (one per append, oldest drops first): index of first seq > since_seq.
+        start = max(0, since_seq - oldest + 1)
+        return {"latest_seq": latest,
+                "samples": pack(samples[start:start + limit], seqs[start:start + limit])}
 
     def status(self) -> dict:
         with self._lock:
@@ -149,14 +222,34 @@ class SampleStore:
                 "buffer_max": self._dq.maxlen,
                 "age_s": round(age, 2) if age is not None else None,
                 "uptime_s": round(time.time() - self._started, 1),
+                "latest_seq": self._seq_counter,
+                "samples_received": self._count,
+                "last_seen_at": self._last_recv or None,
             }
+
+    def samples_in_range(self, from_ms: int, to_ms: int) -> list[ImuSample]:
+        """Return samples whose Nano `timestamp_ms` falls in [from_ms, to_ms] (inclusive).
+
+        Keys off the Nano's own millis-since-boot clock (`ImuSample.timestamp_ms`), not the
+        gateway receive clock — so the browser can request "last 30 s" by computing the window
+        end from the newest sample it has seen (which is also Nano time). Returns an empty list
+        if the window is outside the buffer. Bounds are tolerant: a swapped (to, from) pair is
+        normalised to keep the caller honest.
+        """
+        try:
+            from_ms = int(from_ms); to_ms = int(to_ms)
+        except (TypeError, ValueError):
+            return []
+        if from_ms > to_ms:
+            from_ms, to_ms = to_ms, from_ms
+        with self._lock:
+            return [s for s in self._dq if from_ms <= s.timestamp_ms <= to_ms]
+
+    def to_csv_range(self, from_ms: int, to_ms: int) -> str:
+        """The buffer slice within [from_ms, to_ms] as CSV (header-only if empty)."""
+        return to_csv(self.samples_in_range(from_ms, to_ms))
 
     def to_csv(self) -> str:
         with self._lock:
             rows = list(self._dq)
-        buf = io.StringIO()
-        w = csv.DictWriter(buf, fieldnames=_CSV_FIELDS)
-        w.writeheader()
-        for s in rows:
-            w.writerow(s.to_dict())
-        return buf.getvalue()
+        return to_csv(rows)

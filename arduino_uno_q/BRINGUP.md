@@ -12,8 +12,11 @@ characteristic every 50 ms) → **UNO Q = BLE central** (`python/ble_receiver.py
 ## 0. Prerequisites
 
 1. **Nano is advertising** `NanoIMU` (flashed per `../arduino_nano_33/BRINGUP.md`; Serial shows
-   `BLE advertising started`). Only **one** BLE central may connect at a time — close any
-   phone scanner (nRF Connect/LightBlue) before connecting from the UNO Q.
+   `BLE advertising started`). The peripheral now supports up to **3 simultaneous BLE
+   centrals** (Mbed/Cordio `DM_CONN_MAX`) — the host bridge is just one of them. You can
+   keep nRF Connect open on a phone, or run `ble_smoketest.py` from a laptop in parallel,
+   while the UNO Q bridge is streaming. The Nano stops advertising at the 3-central cap;
+   a 4th scanner won't see `NanoIMU` until a slot frees.
 2. On the UNO Q Linux side:
    ```bash
    pip install bleak                 # mock mode doesn't need it; BLE does
@@ -65,9 +68,11 @@ the dashboard can still override a slot afterwards. Changes to `config.py` take 
 the file is deployed to the board (§2) and the app is re-run.
 
 > Mode is set by `config.APP_MODE` (`dashboard` / `empty` / `scan` / `debug`), not CLI flags.
-> `scan`/`debug` need BlueZ — run them on the host over SSH, not in the container. The Nano's
-> adapter allows only one central: stop the bridge before a host `scan`, and don't run a phone
-> scanner at the same time.
+> `scan`/`debug` need BlueZ — run them on the host over SSH, not in the container. The Nano
+> accepts up to 3 simultaneous centrals, but a host `scan` consumes the BlueZ adapter while
+> it discovers nearby peripherals (BlueZ can't gracefully scan while maintaining live
+> connections on every adapter). Pausing the bridge before `scan` is **recommended** for
+> clean results, but no longer mandatory — a phone scanner can stay subscribed throughout.
 
 ## 2. Sync + run
 
@@ -106,7 +111,7 @@ acc_norm / gyro_norm / phase charts.
 
 ## 5. Pre-check the Nano stream from a PC (optional)
 Before involving the UNO Q, prove the Nano sends a valid stream from any Mac/PC with BLE
-(close phone scanners first):
+(any other clients can stay subscribed — the peripheral supports 3 simultaneous centrals):
 ```bash
 cd ../arduino && pip install -r requirements.txt && python3 ble_smoketest.py
 ```
@@ -117,7 +122,7 @@ cd ../arduino && pip install -r requirements.txt && python3 ble_smoketest.py
 | Symptom (badge / log) | Cause / fix |
 | --------------------- | ----------- |
 | `error: No module named 'bleak'` | `pip install bleak` on the UNO Q. |
-| `ble · NanoIMU not found` | Nano not advertising / too far / another central is connected. Re-check the Nano's Serial, close phone scanners, move closer. |
+| `ble · NanoIMU not found` | Nano not advertising / too far / already at the 3-central cap (Serial prints `at MAX_CENTRALS — advertising paused`). Re-check the Nano's Serial; disconnect one client to free a slot — advertising re-arms automatically. |
 | `bluetoothctl show` → no controller / Powered: no | Bring Bluetooth up: `bluetoothctl power on`; check the radio is enabled on the Qualcomm side. |
 | Connects but `rate≈0`, no data | Nano only notifies while a central is connected — confirm the Nano's Serial prints `central connected`. Check the characteristic UUID matches `config.CHAR_UUID`. |
 | `bad` count climbing | Lines truncated/garbled — likely **MTU** (payload ~68 B > default 20 B). BlueZ usually negotiates a larger MTU automatically; if not, shorten the payload or split it on the firmware side. |
@@ -126,3 +131,35 @@ cd ../arduino && pip install -r requirements.txt && python3 ble_smoketest.py
 | `[rest] disconnected / reconnecting (no bridge)` in the dashboard console | The host REST bridge isn't up/reachable (`BLE_TRANSPORT="rest"`). Start `host_bridge/ble_bridge.py` (or its systemd service) and verify `curl 172.17.0.1:8787/health`; check `REST_BRIDGE_URL` in `config.py`. |
 | `FileNotFoundError` / DBus errors from `bleak` **inside App Lab** | Expected — the container has no BlueZ/D-Bus. Don't run `scan`/`debug`/`direct` BLE in the container; use the host bridge (§1) and keep `BLE_TRANSPORT="bridge"`. |
 | DBus / permission errors on the **host** | Run under a user in the `bluetooth` group (or root) on the UNO Q host. |
+
+## 7. InfluxDB probe (Analysis page)
+
+The Analysis tab reads the InfluxDB the brick is writing to, at the wire level. The default
+config points at the on-board InfluxDB at `http://172.17.0.1:8086` with `admin`/`Arduino15`.
+Run this probe once after the first deploy to confirm the version and DB/bucket name, and
+to pin them in `config.py` so the client doesn't pay an auto-discovery round-trip per query.
+
+```bash
+ssh arduino@walkserver.local
+# Version (1.x vs 2.x) — the X-Influxdb-Version response header.
+curl -sI http://localhost:8086/ping | grep -i influx
+
+# 1.x path: list user databases (the brick's writes land in one of these).
+curl -s -u admin:Arduino15 \
+  'http://localhost:8086/query?q=SHOW+DATABASES' | jq '.results[0].series[0].values'
+
+# 2.x path: list non-system buckets.
+curl -s -u admin:Arduino15 http://localhost:8086/api/v2/buckets \
+  | jq '.buckets[] | select(.name | startswith("_") | not) | .name'
+
+# Ground truth: how the brick was configured in the container.
+docker exec arduino_uno_q-main-1 env | grep -i influx
+```
+
+Update `python/config.py` with the discovered values (`INFLUX_DB` for 1.x;
+`INFLUX_BUCKET` + `INFLUX_ORG` for 2.x), `./sync.sh`, restart the App Lab container, then
+verify with `curl http://walkserver.local:7000/api/analysis/health`.
+
+If the response says `available: false` or `reachable: false`, the dashboard's realtime view
+is unaffected — `/api/analysis/*` returns 503 with a clear message in the UI, and the
+Realtime tab keeps working.

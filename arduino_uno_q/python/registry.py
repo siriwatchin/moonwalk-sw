@@ -64,6 +64,11 @@ class DeviceRegistry:
         with self._lock:
             return sum(d.store.clear() for d in self._devices.values())
 
+    def csv(self, key: str) -> str:
+        """The slot's rolling buffer as CSV. Empty/unbound slot -> header-only CSV."""
+        dev = self.get(key)
+        return dev.store.to_csv() if dev else SampleStore(maxlen=self._maxlen).to_csv()
+
     # ---- snapshots for the API -----------------------------------------
     def status(self) -> dict:
         with self._lock:

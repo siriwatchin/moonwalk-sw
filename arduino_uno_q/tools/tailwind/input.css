@@ -1,3 +1,159 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Theme palette as CSS variables. The whole UI references var(--…) (via Tailwind arbitrary
+   values like bg-[var(--bg)]); toggling the `.dark` class on <html> flips every colour at once.
+   Chart.js reads --chart-* in app.js so canvas charts re-theme together. */
+@layer base {
+  :root {
+    --bg: #ffffff;
+    --panel: #f6f8fa;
+    --text: #1f2328;
+    --muted: #57606a;
+    --faint: #8c959f;
+    --border: #d0d7de;
+    --btn: #f6f8fa;
+    --btn-hover: #eaeef2;
+    --badge: #eaeef2;
+    --live: #1a7f37;
+    --down: #cf222e;
+    --chart-grid: #d8dee4;
+    --chart-tick: #8c959f;
+    --chart-baseline: #afb8c1;
+  }
+  .dark {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --faint: #6e7681;
+    --border: #30363d;
+    --btn: #21262d;
+    --btn-hover: #30363d;
+    --badge: #30363d;
+    --live: #2ea043;
+    --down: #f85149;
+    --chart-grid: #21262d;
+    --chart-tick: #6e7681;
+    --chart-baseline: #30363d;
+  }
+
+  /* a11y: a clear keyboard-focus ring on every interactive element (mouse clicks unaffected,
+     thanks to :focus-visible). Without this the only focus signal is the browser default,
+     which the custom button styling tends to wash out. */
+  :focus-visible {
+    outline: 2px solid var(--live);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* a11y: honour reduced-motion. Chart.js already runs with animation:false; this covers the
+     toast/UI transitions below. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Transient error toasts, bottom-right, newest on top. Separate from the #srcHint status line
+     so a failed POST is never silently overwritten by routine status text. */
+  .toast-stack {
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    z-index: 50;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.5rem;
+    max-width: min(90vw, 24rem);
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    background: var(--down);
+    color: #fff;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 12px;
+    line-height: 1.3;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    animation: toast-in 0.15s ease-out;
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* "no data yet" overlay centred over an empty chart canvas. */
+  .no-data {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: var(--faint);
+    pointer-events: none;
+  }
+
+  /* Status dot shared by the source-picker trigger and its menu items. The neutral colour
+     (`muted`) reads as "no source"; `.status-live` is green and `.status-warn` is amber so
+     "source set but offline" stands apart. Colour isn't the only signal — the trigger label
+     and the item icons (🧪 / 📡 / ○) also distinguish state for non-colour users. */
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: var(--faint);
+    flex-shrink: 0;
+  }
+  .status-dot.status-live { background: var(--live); box-shadow: 0 0 0 2px color-mix(in srgb, var(--live) 25%, transparent); }
+  .status-dot.status-warn { background: #d4a72c; }
+
+  /* Loading-skeleton primitive used by the Analysis tab while /api/analysis/* is in flight.
+     One class for the bar/block/overlay shapes — set width + height via Tailwind utilities
+     (`h-3 w-24` etc.) or `inset-0` for full-cover chart overlays. `--border` is a touch
+     darker than `--panel` in both themes so the bar reads on top of `bg-base-200` cards.
+     The pulse stops automatically for users who prefer reduced motion (see @media above). */
+  .skel {
+    background-color: var(--border);
+    border-radius: 0.375rem;
+    animation: skel-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes skel-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+  }
+
+  /* Active-recording button affordance. Two layers read like a video-record indicator:
+       - the button itself breathes (subtle 1.0→1.04 scale + glow ring) on a 1.2 s loop
+       - a `.rec-dot` glyph blinks 1.0→0.4 on the same beat as the camera REC light
+     The glow tint reads on both themes because `--down` is mapped to red in both.
+     `prefers-reduced-motion` zeroes the animation duration via the existing media query. */
+  .btn-rec-active {
+    animation: rec-pulse 1.2s ease-in-out infinite;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--down) 50%, transparent);
+  }
+  @keyframes rec-pulse {
+    0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0   color-mix(in srgb, var(--down) 50%, transparent); }
+    50%      { transform: scale(1.04); box-shadow: 0 0 0 6px color-mix(in srgb, var(--down) 0%,  transparent); }
+  }
+  .rec-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 9999px;
+    background: #fff;                       /* the REC light is white-hot, not red — the
+                                                button is already red, so the dot pops */
+    margin-right: 4px;
+    animation: rec-dot-blink 1.2s ease-in-out infinite;
+  }
+  @keyframes rec-dot-blink {
+    0%, 100% { opacity: 1;   }
+    50%      { opacity: 0.35;}
+  }
+}

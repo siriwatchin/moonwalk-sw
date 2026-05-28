@@ -6,7 +6,6 @@ same pipeline as BLE mode. Implements the SensorSource protocol. No SDK imports.
 
 from __future__ import annotations
 
-import math
 import random
 import time
 from collections.abc import Iterator
@@ -14,26 +13,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 from config import (
-    ACC_NEAR_G_THRESHOLD,
     GRAVITY,
-    GYRO_SWING_THRESHOLD,
-    GYRO_ZERO_THRESHOLD,
     INTERVAL_MS,
     PAYLOAD_TAG,
 )
-
-
-def _classify_phase(acc_norm: float, gyro_norm: float) -> int:
-    """Same rules as the firmware — thresholds come from the shared BLE contract."""
-    acc_delta = abs(acc_norm - GRAVITY)
-    near_g = acc_delta < ACC_NEAR_G_THRESHOLD
-    if near_g and gyro_norm < GYRO_ZERO_THRESHOLD:
-        return 1
-    if near_g and GYRO_ZERO_THRESHOLD <= gyro_norm < GYRO_SWING_THRESHOLD:
-        return 2
-    if acc_delta >= ACC_NEAR_G_THRESHOLD or gyro_norm >= GYRO_SWING_THRESHOLD:
-        return 3
-    return 0
 
 
 @dataclass
@@ -97,16 +80,14 @@ class MockNanoSource:
         gx = r.gauss(state.gyro_mean, state.gyro_std)
         gy = r.gauss(state.gyro_mean * 0.4, state.gyro_std)
         gz = r.gauss(state.gyro_mean * 0.2, state.gyro_std)
-
-        acc_norm = math.sqrt(ax * ax + ay * ay + az * az)
-        gyro_norm = math.sqrt(gx * gx + gy * gy + gz * gz)
-        phase = _classify_phase(acc_norm, gyro_norm)
+        # BME680 pressure (Pa): slow-drifting around sea-level standard, small noise.
+        pressure = r.gauss(101325.0, 15.0)
 
         line = (
             f"{PAYLOAD_TAG},{self._t_ms},"
             f"{ax:.4f},{ay:.4f},{az:.4f},"
             f"{gx:.4f},{gy:.4f},{gz:.4f},"
-            f"{acc_norm:.4f},{gyro_norm:.4f},{phase}"
+            f"{pressure:.1f}"
         )
         self._t_ms += INTERVAL_MS
         return line

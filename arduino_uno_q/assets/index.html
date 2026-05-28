@@ -1,49 +1,438 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Smart Cane — UNO Q IMU</title>
+  <title>Smart Cane IMU — UNO Q</title>
 
-  <!-- Vendored Tailwind (offline, no CDN). Rebuild with tools/tailwind/build.sh after
-       adding new Tailwind classes to this file or app.js. -->
+  <!-- Apply the saved theme before first paint (avoids a flash). Default: light. We set both
+       `data-theme` (driving daisyUI components) and the `.dark` class (driving the existing
+       --bg/--text/--chart-* CSS vars used by Tailwind arbitrary values + Chart.js). Keeping
+       them in sync means neither side flickers. -->
+  <script>
+    (function () {
+      var t = localStorage.getItem("theme") || "light";
+      var root = document.documentElement;
+      root.classList.toggle("dark", t === "dark");
+      root.setAttribute("data-theme", t === "dark" ? "moonwalk-dark" : "moonwalk-light");
+    })();
+  </script>
+
+  <!-- Vendored Tailwind + daisyUI (offline, no CDN). Rebuild with tools/tailwind/build.sh after
+       changing classes here or in app.js. Custom CSS (focus ring, reduced-motion, toast,
+       no-data overlay, status dot) lives in tools/tailwind/input.css and is compiled in. -->
   <link rel="stylesheet" href="tailwind.css" />
 </head>
-<body class="bg-[#0e1116] text-[#e6edf3] font-sans min-h-screen">
-  <header class="flex items-center gap-4 px-5 py-3 border-b border-[#222]">
-    <h1 class="text-lg font-semibold m-0">🦯 Smart Cane — UNO Q</h1>
-    <!-- Tab nav: this app is the realtime (raw-sample) view only; analysis is a separate
-         page that reads the TimeSeriesStore, not yet built here. -->
-    <nav class="flex items-center gap-1 ml-2">
-      <span class="px-3 py-1 rounded-lg text-[13px] font-semibold bg-[#21262d] border border-[#30363d]">Realtime</span>
-      <span class="px-3 py-1 rounded-lg text-[13px] text-[#6e7681] cursor-not-allowed" title="coming soon">Analysis</span>
-    </nav>
-    <!-- Slot switch: one slot shown full-width at a time (both stay bound in the backend). -->
-    <div id="slotTabs" class="flex items-center gap-1 ml-2">
-      <span class="text-xs text-[#8b949e] mr-1">Slot</span>
-      <button data-slot="A" class="slot-tab px-3 py-1 rounded-lg text-[13px] font-semibold border border-[#30363d]">A</button>
-      <button data-slot="B" class="slot-tab px-3 py-1 rounded-lg text-[13px] font-semibold border border-[#30363d]">B</button>
-    </div>
-    <span id="badge" class="px-3 py-1 rounded-full text-[13px] font-semibold bg-[#30363d]">connecting…</span>
-    <span id="meta" class="text-xs text-[#8b949e]"></span>
-    <span class="flex-1"></span>
-    <button id="btnScan" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px]">Scan BLE</button>
-    <button id="btnReset" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px]">Reset to demo pair</button>
-    <button id="btnClear" class="bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded-lg px-3 py-1.5 text-[13px]">Clear</button>
-  </header>
+<body class="bg-[var(--bg)] text-[var(--text)] font-sans">
+  <!-- daisyUI right drawer. The drawer side panel is `lg:hidden` so on desktop the controls live
+       inline in the header; the ☰ button is hidden on lg+ as well. On smaller screens the header
+       collapses to logo + live badge + ☰, and tapping ☰ reveals the full control surface.
+       Controls in both places share `data-action="…"` attributes so a single event delegator in
+       app.js wires them both — no duplicate ids. -->
+  <div class="drawer drawer-end">
+    <input id="drawer-toggle" type="checkbox" class="drawer-toggle" />
 
-  <div class="px-5 pt-3">
-    <div id="srcHint" class="text-xs text-[#8b949e]">Realtime raw IMU — set each slot's source from its dropdown (mock or a scanned Nano). Click <b>Scan BLE</b> to discover Nanos.</div>
+    <!-- ===== main page ===== -->
+    <div class="drawer-content min-h-screen lg:h-screen lg:overflow-hidden flex flex-col">
+      <!-- Header: logo + tabs + live badge + (desktop-only) inline controls + (mobile-only) ☰. -->
+      <header role="banner" class="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 border-b border-[var(--border)] shrink-0">
+        <!-- Brand (left) -->
+        <h1 class="text-lg font-semibold m-0 shrink-0">🦯 Smart Cane IMU</h1>
+
+        <nav aria-label="Page" class="join shrink-0 hidden sm:inline-flex" data-tab-nav>
+          <button class="join-item btn btn-sm btn-active no-animation" data-tab="realtime"
+            aria-current="page">Realtime</button>
+          <button class="join-item btn btn-sm" data-tab="analysis"
+            title="Gait trends from history">Analysis</button>
+        </nav>
+
+        <!-- Live badge + meta — visible on every breakpoint (it's the primary state cue). -->
+        <span id="badge" role="status" aria-live="polite" class="badge badge-ghost gap-1 shrink-0">connecting…</span>
+        <span id="meta" class="text-xs opacity-70 hidden md:inline truncate"></span>
+
+        <span class="flex-1"></span>
+
+        <!-- ===== desktop-only inline controls (lg+) ============================= -->
+        <!-- Source picker: daisyUI dropdown with a card list (rendered by app.js into
+             [data-source-list]). The trigger shows the active source + a status dot. -->
+        <div class="dropdown dropdown-end hidden lg:block" data-source-dropdown>
+          <button tabindex="0" role="button" class="btn btn-sm btn-outline gap-2" data-source-trigger
+            aria-label="Choose source">
+            <span class="status-dot" data-source-dot></span>
+            <span class="font-medium" data-source-label>No source</span>
+            <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <ul tabindex="0" class="dropdown-content z-40 menu bg-base-200 text-base-content shadow-lg rounded-box w-72 p-2 mt-1 max-h-[70vh] overflow-auto"
+            data-source-list role="menu" aria-label="Active source"></ul>
+        </div>
+
+        <!-- Record + Download CSV — same outcome (a CSV), grouped via daisyUI `join`. The Rec
+             button uses btn-outline btn-error so it reads as "ready to record" (red outline)
+             rather than "currently active" (solid primary). When recording it flips to solid
+             btn-error — outline → solid is the visual cue for "armed → rolling". -->
+        <div class="join hidden lg:inline-flex">
+          <button class="join-item btn btn-sm btn-outline btn-error" data-action="record" aria-label="Start recording">⏺ Rec</button>
+          <button class="join-item btn btn-sm btn-outline" data-action="export" aria-label="Download CSV"
+            title="Download CSV (buffer / history / session)">⬇ CSV</button>
+        </div>
+
+        <!-- "More" — secondary actions (Scan / Reset / Clear) tucked behind one button. -->
+        <div class="dropdown dropdown-end hidden lg:block">
+          <button tabindex="0" role="button" class="btn btn-ghost btn-sm" aria-label="More actions" title="More">⋯</button>
+          <ul tabindex="0" class="dropdown-content z-40 menu bg-base-200 text-base-content shadow-lg rounded-box w-56 p-2 mt-1"
+            role="menu" aria-label="More actions">
+            <li><a data-action="scan" tabindex="0">🔍 Scan BLE</a></li>
+            <li><a data-action="reset" tabindex="0">↺ Reset to demo</a></li>
+            <li><a data-action="clear" tabindex="0">🧹 Clear buffer</a></li>
+          </ul>
+        </div>
+
+        <button class="btn btn-ghost btn-sm text-base hidden lg:inline-flex" data-action="theme"
+          aria-label="Toggle light/dark theme" title="Toggle light/dark">🌙</button>
+
+        <!-- ===== mobile-only hamburger (< lg) =================================== -->
+        <label for="drawer-toggle" tabindex="0" aria-label="Open controls"
+          class="btn btn-ghost btn-sm text-base lg:hidden">☰</label>
+      </header>
+
+      <!-- Info + data-quality line. Wellness-framed messages (missing / resumed) render here. -->
+      <div class="px-3 sm:px-5 pt-2 shrink-0">
+        <div id="srcHint" role="status" aria-live="polite" class="text-xs opacity-70">Realtime IMU — pick an active source above (mock, or a scanned Nano). Tap <b>☰</b> on mobile for the full control surface.</div>
+      </div>
+
+      <!-- Two tab panels: realtime (the original 7-channel scrolling charts) and analysis
+           (gait metrics computed from the InfluxDB history). Tabs are switched in app.js by
+           toggling the `hidden` attribute; the inactive panel stops its work (realtime pauses
+           its poll loops, analysis tears down its Chart.js instances). -->
+      <main class="flex-1 min-h-0 p-2 sm:p-3">
+        <section id="panel-realtime" data-tab-panel="realtime" class="lg:h-full">
+          <!-- Built once by app.js / buildPanel(). -->
+          <section id="panel" class="lg:h-full"></section>
+        </section>
+
+        <section id="panel-analysis" data-tab-panel="analysis" class="lg:h-full" hidden>
+          <div class="h-full overflow-auto flex flex-col gap-3">
+            <!-- Range controls: presets + custom datetime-local + Refresh. -->
+            <div class="flex flex-wrap items-center gap-2 px-1">
+              <div class="join" role="group" aria-label="Range preset">
+                <button class="join-item btn btn-sm btn-active" data-range-preset="600">Last 10 min</button>
+                <button class="join-item btn btn-sm" data-range-preset="3600">Last 1 hr</button>
+                <button class="join-item btn btn-sm" data-range-preset="86400">Last 24 hr</button>
+                <button class="join-item btn btn-sm" data-range-preset="custom">Custom…</button>
+              </div>
+              <div class="flex items-center gap-2 hidden" data-range-custom>
+                <input type="datetime-local" class="input input-bordered input-sm" data-range-from aria-label="From">
+                <span class="text-xs opacity-60">to</span>
+                <input type="datetime-local" class="input input-bordered input-sm" data-range-to aria-label="To">
+              </div>
+              <!-- Device-key picker. Populated from /api/analysis/labels on first tab entry;
+                   if the probe fails, the select stays disabled with the default "Device A". -->
+              <select class="select select-bordered select-sm" data-analysis-device
+                aria-label="Choose device" disabled>
+                <option value="A">Device A</option>
+              </select>
+              <span class="flex-1"></span>
+              <button class="btn btn-sm btn-outline" data-action="analysis-refresh" aria-label="Refresh analysis">↻ Refresh</button>
+            </div>
+
+            <!-- Header band: title (what / which device) + source badge (current live source)
+                 on top row; subtitle (range / duration / samples / axis) on bottom row.
+                 The badge labels the *currently streaming* source, not necessarily what
+                 streamed during the analyzed window — tooltip says so. -->
+            <div class="px-1 flex flex-wrap items-start gap-2" data-analysis-header>
+              <div class="flex-1 min-w-0">
+                <div class="text-base font-semibold flex items-center gap-2" data-analysis-title>
+                  🦯 Gait analysis
+                </div>
+                <!-- Subtitle keeps the legacy `data-analysis-status` hook for any external JS. -->
+                <div class="text-xs opacity-70 mt-0.5" data-analysis-subtitle data-analysis-status>—</div>
+              </div>
+              <span class="badge badge-ghost gap-1 shrink-0" data-analysis-source
+                title="Currently streaming source. Analyzed data is historical — the live source during that window may have differed.">
+                — no source
+              </span>
+            </div>
+
+            <!-- Summary cards grid: 6 stat cards (3 cols on lg, 1 col on sm). Filled by
+                 renderAnalysis(); seeded with skeleton stubs by renderAnalysisSkeleton(). -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 px-1" data-analysis-cards>
+            </div>
+
+            <!-- Charts grid: cadence trend + cycle-time histogram + planted timeline.
+                 The `relative` wrapper around each canvas is what `clearChartSkeletons()`
+                 layers a full-cover `.skel` overlay into during fetch. -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 px-1">
+              <div class="card bg-base-200 shadow-sm">
+                <div class="card-body p-3">
+                  <h3 class="card-title text-sm">Cadence trend</h3>
+                  <div class="relative h-48" data-analysis-chart-wrap="cadence">
+                    <canvas data-analysis-chart="cadence"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="card bg-base-200 shadow-sm">
+                <div class="card-body p-3">
+                  <h3 class="card-title text-sm">Cycle-time distribution</h3>
+                  <div class="relative h-48" data-analysis-chart-wrap="cycleHist">
+                    <canvas data-analysis-chart="cycleHist"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="card bg-base-200 shadow-sm lg:col-span-2">
+                <div class="card-body p-3">
+                  <h3 class="card-title text-sm">Planted / swing timeline</h3>
+                  <div class="relative h-32" data-analysis-chart-wrap="timeline">
+                    <canvas data-analysis-chart="timeline"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Footnote: best-effort L/R label + Phase 2 hint. -->
+            <p class="text-[11px] opacity-60 px-1">
+              L/R is a best-effort alternation label, not handedness.
+              Handle Load / Weight-Support Compliance are coming in a later release.
+            </p>
+          </div>
+        </section>
+      </main>
+
+      <!-- Product-framing disclaimer (CLAUDE.md / ADR-0005): Moon Walk is wellness self-monitoring,
+           not a medical device. Required on every dashboard surface. -->
+      <footer class="shrink-0 px-3 sm:px-5 py-2 border-t border-[var(--border)] text-[11px] opacity-60">
+        Moon Walk shows a <b>wellness awareness cue, not a medical assessment</b> — it does not diagnose, treat, or predict.
+      </footer>
+
+      <!-- Transient error toasts (POST failures / server unreachable) — kept separate from the
+           informational #srcHint so errors aren't silently overwritten by status text. -->
+      <div id="toasts" aria-live="assertive" class="toast-stack"></div>
+    </div>
+
+    <!-- ===== right drawer side (mobile only) ===== -->
+    <aside class="drawer-side z-50 lg:hidden">
+      <!-- Clicking the overlay closes the drawer (CSS-only via the checkbox). -->
+      <label for="drawer-toggle" aria-label="Close controls" class="drawer-overlay"></label>
+      <div class="min-h-full w-80 bg-base-200 text-base-content p-5 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-base font-semibold m-0">Controls</h2>
+          <label for="drawer-toggle" aria-label="Close" class="btn btn-ghost btn-xs">✕</label>
+        </div>
+
+        <!-- Source picker — same dropdown component as the desktop header, full-width. -->
+        <section aria-labelledby="grp-src-m" class="flex flex-col gap-2">
+          <h3 id="grp-src-m" class="text-[11px] uppercase tracking-wider opacity-60 m-0">Source</h3>
+          <div class="dropdown w-full" data-source-dropdown>
+            <button tabindex="0" role="button" class="btn btn-sm btn-outline w-full justify-between" data-source-trigger
+              aria-label="Choose source">
+              <span class="flex items-center gap-2">
+                <span class="status-dot" data-source-dot></span>
+                <span class="font-medium" data-source-label>No source</span>
+              </span>
+              <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <ul tabindex="0" class="dropdown-content z-40 menu bg-base-100 text-base-content shadow-lg rounded-box w-full p-2 mt-1 max-h-[60vh] overflow-auto"
+              data-source-list role="menu" aria-label="Active source"></ul>
+          </div>
+        </section>
+
+        <div class="divider my-0"></div>
+
+        <!-- Capture: same outcome (CSV) — Record + Download grouped together. Tapping Rec
+             opens the dlgRecName modal to set a session name; pressing Stop saves the CSV. -->
+        <section aria-labelledby="grp-cap-m" class="flex flex-col gap-2">
+          <h3 id="grp-cap-m" class="text-[11px] uppercase tracking-wider opacity-60 m-0">Capture</h3>
+          <div class="join">
+            <button class="join-item btn btn-outline btn-error btn-sm flex-1" data-action="record" aria-label="Start recording">⏺ Rec</button>
+            <button class="join-item btn btn-outline btn-sm flex-1" data-action="export" aria-label="Download CSV">⬇ CSV</button>
+          </div>
+          <span data-rec-status role="status" aria-live="polite" class="text-xs opacity-70 min-h-[1rem]"></span>
+        </section>
+
+        <div class="divider my-0"></div>
+
+        <!-- Secondary actions: same set as the desktop "More ⋯" menu. -->
+        <section aria-labelledby="grp-more-m" class="flex flex-col gap-2">
+          <h3 id="grp-more-m" class="text-[11px] uppercase tracking-wider opacity-60 m-0">More</h3>
+          <button class="btn btn-outline btn-sm" data-action="scan">🔍 Scan BLE</button>
+          <button class="btn btn-outline btn-warning btn-sm" data-action="reset">↺ Reset to demo</button>
+          <button class="btn btn-outline btn-error btn-sm" data-action="clear">🧹 Clear buffer</button>
+          <div class="divider my-0"></div>
+          <button class="btn btn-ghost btn-sm" data-action="theme">🌙 Toggle theme</button>
+        </section>
+      </div>
+    </aside>
   </div>
 
-  <!-- Two fixed compare slots (A / B), built by app.js into #panels. -->
-  <main class="p-5">
-    <section id="panels" class="grid gap-[18px] grid-cols-1 max-w-3xl mx-auto"></section>
-  </main>
+  <!-- ===== Download CSV modal (daisyUI <dialog>) ============================= -->
+  <!-- Three ways to a CSV: live buffer slice, cold-path history range, last recording. The
+       form is method="dialog" so Esc / clicking outside / pressing Cancel close cleanly. -->
+  <dialog id="dlgCsv" class="modal">
+    <div class="modal-box max-w-xl">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close">✕</button>
+      </form>
+      <h3 class="text-lg font-bold mb-1">Download CSV</h3>
+      <p class="text-xs opacity-70 mb-3">Choose what to export. Live buffer ≈ last 30 s in memory; History queries the on-device database.</p>
+
+      <form id="frmCsv" class="space-y-4">
+        <!-- ---- live buffer ---- -->
+        <section aria-labelledby="csv-grp-live">
+          <h4 id="csv-grp-live" class="text-[11px] uppercase tracking-wider opacity-60 mb-1">Live buffer</h4>
+          <div class="space-y-1">
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="buffer-all" class="radio radio-sm radio-primary" checked />
+              <span class="label-text text-sm">Whole buffer (~30 s)</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="buffer-10s" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 10 s</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="buffer-30s" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 30 s</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- ---- history (cold path / ts_store) ---- -->
+        <section aria-labelledby="csv-grp-hist">
+          <h4 id="csv-grp-hist" class="text-[11px] uppercase tracking-wider opacity-60 mb-1">History (database)</h4>
+          <div class="space-y-1">
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="hist-5m" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 5 min</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="hist-30m" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 30 min</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="hist-1h" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 1 hour</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="hist-custom" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Custom range…</span>
+            </label>
+            <div class="ml-7 grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1" data-csv-custom hidden>
+              <label class="form-control">
+                <span class="label-text text-xs opacity-70">From</span>
+                <input type="datetime-local" class="input input-bordered input-sm" data-csv-from />
+              </label>
+              <label class="form-control">
+                <span class="label-text text-xs opacity-70">To</span>
+                <input type="datetime-local" class="input input-bordered input-sm" data-csv-to />
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---- session ---- -->
+        <section aria-labelledby="csv-grp-sess">
+          <h4 id="csv-grp-sess" class="text-[11px] uppercase tracking-wider opacity-60 mb-1">Session</h4>
+          <label class="label cursor-pointer justify-start gap-2 py-1" data-csv-session-wrap>
+            <input type="radio" name="csvRange" value="session" class="radio radio-sm radio-primary" disabled />
+            <span class="label-text text-sm" data-csv-session-text>No recording yet</span>
+          </label>
+        </section>
+
+        <div class="modal-action">
+          <button type="button" class="btn btn-ghost btn-sm" data-csv-cancel>Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" data-csv-download>⬇ Download</button>
+        </div>
+      </form>
+    </div>
+    <!-- Click-outside to close. -->
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
+  <!-- ===== Record-name modal (daisyUI <dialog>) ============================= -->
+  <!-- Pops up when the user taps ⏺ Rec (header or drawer). They pick a session name, then
+       Start (or Enter inside the input) actually begins recording. Stopping is still done by
+       tapping the same button — which is now ⏹ Stop — and the CSV auto-downloads.
+       Mirrors the dlgCsv structure (method="dialog" forms close on Esc / backdrop). -->
+  <dialog id="dlgRecName" class="modal">
+    <div class="modal-box max-w-md">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close">✕</button>
+      </form>
+      <h3 class="text-lg font-bold mb-1">⏺ New recording</h3>
+      <p class="text-xs opacity-70 mb-3">Name this session so you can find the CSV later. Press <b>Stop</b> on the same button to save.</p>
+
+      <form id="frmRecName" class="space-y-3">
+        <label class="form-control">
+          <span class="label-text text-sm">Recording name</span>
+          <input type="text" class="input input-bordered w-full" data-rec-name maxlength="60"
+            autocomplete="off" placeholder="e.g. morning walk" />
+          <span class="label-text-alt text-[11px] opacity-60 mt-1">Spaces and Thai characters are fine — illegal filename characters are stripped.</span>
+        </label>
+
+        <div class="modal-action">
+          <button type="button" class="btn btn-ghost btn-sm" data-rec-cancel>Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm" data-rec-start>⏺ Start recording</button>
+        </div>
+      </form>
+    </div>
+    <!-- Click-outside to close (same as dlgCsv). -->
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
+  <!-- ===== Per-chart settings modal (daisyUI <dialog>) ====================== -->
+  <!-- Opened from the ⚙ button in each chart cell's header. data-cfg-active on the box holds
+       the currently-edited channel field (ax, ay, …) so input handlers know which entry of
+       peakCfgs to mutate. All controls live-update; closing is just dismissing (no Save). -->
+  <dialog id="dlgChartCfg" class="modal">
+    <div class="modal-box max-w-sm" data-cfg-active="">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close">✕</button>
+      </form>
+      <h3 class="text-lg font-bold mb-1">Settings: <span data-cfg-title>—</span></h3>
+      <p class="text-xs opacity-70 mb-3">Tune peak detection for this channel only. Changes apply live.</p>
+
+      <div class="space-y-4">
+        <label class="cursor-pointer flex items-center gap-2">
+          <input type="checkbox" data-cfg-enabled class="checkbox checkbox-sm" />
+          <span class="label-text">Detect peaks</span>
+        </label>
+
+        <label class="form-control">
+          <div class="flex justify-between">
+            <span class="label-text text-sm">Threshold multiplier</span>
+            <span class="text-sm font-semibold tabular-nums" data-cfg-mult-val>5.0×</span>
+          </div>
+          <input type="range" data-cfg-mult min="2" max="20" step="0.5" class="range range-sm" />
+          <span class="label-text-alt text-[11px] opacity-60 mt-1">Peak if |value − baseline| &gt; multiplier × MAD</span>
+        </label>
+
+        <label class="form-control">
+          <div class="flex justify-between">
+            <span class="label-text text-sm">Cluster gap</span>
+            <span class="text-sm font-semibold tabular-nums" data-cfg-gap-val>200ms</span>
+          </div>
+          <input type="range" data-cfg-gap min="50" max="1000" step="50" class="range range-sm" />
+          <span class="label-text-alt text-[11px] opacity-60 mt-1">Above-threshold samples within this window merge into one peak event.</span>
+        </label>
+
+        <label class="cursor-pointer flex items-center gap-2">
+          <input type="checkbox" data-cfg-visible class="checkbox checkbox-sm" />
+          <span class="label-text">Show this chart</span>
+        </label>
+      </div>
+
+      <div class="modal-action">
+        <form method="dialog"><button class="btn btn-primary btn-sm">Done</button></form>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
 
   <!-- Vendored Chart.js (offline, no CDN — same policy as tailwind.css). Realtime line charts. -->
   <script src="chart.umd.min.js"></script>
-  <!-- Pure REST polling (no Socket.IO) — app.js polls /api/* on the WebUI brick. -->
+  <!-- Vendored chartjs-plugin-datalabels (offline). Used to label peak markers with the value
+       on the peak dataset; disabled by default in app.js so the line dataset stays clean. -->
+  <script src="chartjs-plugin-datalabels.min.js"></script>
+  <!-- Pure REST polling (no Socket.IO). app.js polls the incremental /api/samples endpoint and
+       appends into a browser-side ring buffer; rendering is on a separate throttled loop. -->
   <script src="app.js"></script>
 </body>
 </html>

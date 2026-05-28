@@ -2,9 +2,9 @@
 
 A self-contained Bluetooth Low Energy prototype:
 
-1. **Arduino Nano 33 BLE** (LSM9DS1 IMU) reads accel+gyro, computes `acc_norm` /
-   `gyro_norm`, classifies a lightweight **walking phase**, and **notifies** one
-   compact CSV line over BLE every 50 ms.
+1. **Arduino Nano 33 BLE** (LSM9DS1 IMU + BME680 pressure) reads accel+gyro and
+   barometric pressure, and **notifies** one compact raw CSV line over BLE every
+   50 ms (no on-Nano feature extraction).
 2. The **Arduino UNO Q** receives the data on its **Linux side** and acts as a
    gateway: `ble_bridge.py` re-broadcasts each sample as JSON over a **WebSocket
    server**, so dashboards / other clients can consume the live stream.
@@ -19,11 +19,11 @@ A self-contained Bluetooth Low Energy prototype:
 
 | File                       | Role                                                              |
 | -------------------------- | ----------------------------------------------------------------- |
-| `nano_imu_ble_sender.ino`  | Nano 33 BLE peripheral: IMU + phase detection + BLE notify.       |
+| `nano_imu_ble_sender.ino`  | Nano 33 BLE peripheral: IMU + BME680 pressure + BLE notify.       |
 | `ble_bridge.py`            | **UNO Q gateway**: BLE in → WebSocket server out (JSON). Primary. |
 | `ble_receiver.py`          | UNO Q simple debug receiver: prints raw + parsed payloads.        |
 | `imu_payload.py`           | Shared BLE UUIDs + CSV→JSON parser used by the Python scripts.     |
-| `ble_smoketest.py`         | Bring-up PASS/FAIL test: connect, validate frames, rate, phases.  |
+| `ble_smoketest.py`         | Bring-up PASS/FAIL test: connect, validate frames, rate, timestamps. |
 | `requirements.txt`         | Python deps (`bleak`, `websockets`).                              |
 
 > 🔧 **Flashing the Nano for the first time?** Follow [`BRINGUP.md`](BRINGUP.md) —
@@ -43,46 +43,75 @@ A self-contained Bluetooth Low Energy prototype:
 | Properties          | notify + read                               |
 | Send interval       | 50 ms (~20 Hz)                              |
 | Gravity             | 9.80665 (g → m/s²)                          |
+| Pressure sensor     | BME680 over hardware `Wire` bus: **A4=SDA, A5=SCL** |
 
-**Payload** (one CSV line, 11 fields; accel in m/s², gyro in deg/s):
+**Payload** (one CSV line, 9 fields; accel in m/s², gyro in deg/s, pressure in Pa):
 
 ```
-IMU,timestamp_ms,ax_ms2,ay_ms2,az_ms2,gx_dps,gy_dps,gz_dps,acc_norm,gyro_norm,phase
-IMU,123456,0.0123,-0.0456,9.8012,0.1200,-0.3100,0.0500,9.8014,0.3370,1
+IMU,timestamp_ms,ax_ms2,ay_ms2,az_ms2,gx_dps,gy_dps,gz_dps,pressure_pa
+IMU,123456,0.0123,-0.0456,9.8012,0.1200,-0.3100,0.0500,101325.0
 ```
 
-### Walking-phase detection
-Inspired by *"Walking Distance Estimation Using Walking Canes with Inertial
-Sensors"*: start from phase detection on the accel/gyro **norms**, not raw
-double-integration. No calibration is applied — `acc_norm` must sit near gravity
-for these rules to hold.
+> **Raw 6-axis IMU + pressure only.** The Nano does **no** feature extraction — no norms, no
+> walking-phase classification, no velocity/distance, no Kalman filter. (An earlier prototype
+> emitted `acc_norm`/`gyro_norm`/`phase`; that was removed — any feature extraction is now a
+> downstream UNO Q concern.) The wire field list is generated from `protocol/ble_contract.json`.
 
-`accNorm = ‖accel‖`, `gyroNorm = ‖gyro‖`, `accDelta = |accNorm − 9.80665|`.
+### Multiple simultaneous clients
 
-| Phase | Code | Rule |
-| ----- | ---- | ---- |
-| `UNKNOWN`                      | 0 | none of the below |
-| `STATIONARY_OR_ZERO_VELOCITY`  | 1 | `accDelta < 0.30` **and** `gyroNorm < 2.0` |
-| `GROUND_CONTACT_WITH_ROTATION` | 2 | `accDelta < 0.30` **and** `2.0 ≤ gyroNorm < 25.0` |
-| `SWING_OR_ON_AIR`              | 3 | `accDelta ≥ 0.30` **or** `gyroNorm ≥ 25.0` |
+The peripheral accepts up to **3 BLE centrals connected at the same time** (Mbed/Cordio's
+`DM_CONN_MAX` default — `ArduinoBLE`'s `ATT_MAX_PEERS`). Every subscribed central receives
+the same CSV notifications in parallel; the firmware doesn't fan out by hand — `BLENotify`
+on the characteristic auto-broadcasts to all subscribers.
 
-Thresholds (`const` in the sketch): `ACC_NEAR_G_THRESHOLD=0.30`,
-`GYRO_ZERO_THRESHOLD=2.0`, `GYRO_SWING_THRESHOLD=25.0`.
+What that lets you do:
 
-> ⚠️ This phase deliberately does **not** compute velocity/distance or run a
-> Kalman filter — it only proves a stable IMU + phase payload over BLE.
+- Run the UNO Q's `host_bridge/ble_bridge.py` **and** keep nRF Connect open on a phone for
+  visual debugging — without one kicking the other off.
+- Stream into the TCP bridge and the REST bridge at once during bring-up.
+- Run `ble_smoketest.py` from a laptop **while** the live bridge is up to cross-check rate.
+
+Advertising behaviour:
+
+- The Nano keeps advertising as new centrals connect, up to the cap.
+- At 3 connected centrals it **stops advertising** (a 4th scanner won't see `NanoIMU`).
+- A disconnect re-arms advertising automatically.
+
+Serial Monitor shows the transitions:
+
+```
+central connected: AA:BB:CC:DD:EE:FF (2/3)
+central disconnected: AA:BB:CC:DD:EE:FF (1/3)
+at MAX_CENTRALS — advertising paused
+```
+
+> **Throughput note:** 3 centrals share the radio; if any of them negotiates a tiny ATT_MTU
+> (≤ 23) the effective per-client rate may dip below 20 Hz under load. On Linux/BlueZ and
+> modern iOS/Android the MTU is usually 100-247 — no issue.
+
+### BME680 pressure
+A BME680 is wired on the standard hardware **`Wire`** bus (A4=SDA, A5=SCL); the onboard LSM9DS1
+lives on the internal `Wire1`, so `Wire` is free. The sketch reads it ~1 Hz (non-blocking
+`beginReading`/`endReading`), caches the value, and repeats it on every 50 ms line; the gas
+heater is disabled (pressure only). The sensor is optional: if it doesn't init, the Nano still
+streams IMU with `pressure=0`. Needs Arduino libraries **`Adafruit_BME680`** + **`Adafruit_Sensor`**
+(Adafruit Unified Sensor). Setup runs an I2C scan and `updatePressure()` emits rate-limited
+`[bme] …` Serial logs to make bring-up easy to diagnose.
 
 ## Setup & run
 
 ### Sender (Nano 33 BLE)
 1. Arduino IDE → install **Arduino Mbed OS Nano Boards**.
-2. Library Manager: install **Arduino_LSM9DS1** and **ArduinoBLE**.
-3. Select board **Arduino Nano 33 BLE**, open `nano_imu_ble_sender.ino`, upload.
+2. Library Manager: install **Arduino_LSM9DS1**, **ArduinoBLE**, **Adafruit BME680
+   Library**, and **Adafruit Unified Sensor**.
+3. Wire the BME680 over I2C to **A4 (SDA)** and **A5 (SCL)** + 3V3/GND (most breakouts have
+   pull-ups on board).
+4. Select board **Arduino Nano 33 BLE**, open `nano_imu_ble_sender.ino`, upload.
    - The IDE may offer to move the file into a matching sketch folder — accept it,
      or open it directly; the code is unchanged either way.
-4. Serial Monitor @ **115200**. Expect:
-   `IMU init OK` → `BLE init OK` → `BLE advertising started`, then a CSV header and
-   payload lines ~every 50 ms (last column = phase code).
+5. Serial Monitor @ **115200**. Expect:
+   `IMU init OK` → `BME680 init OK (pressure)` → `BLE init OK` → `BLE advertising
+   started`, then a CSV header and payload lines ~every 50 ms (last column = pressure in Pa).
 
 #### Test BLE advertising with a phone scanner app
 Use **nRF Connect** (iOS/Android) or **LightBlue**:
@@ -90,6 +119,10 @@ Use **nRF Connect** (iOS/Android) or **LightBlue**:
 - Open the custom service `19B10000-…-768A1214` → characteristic `19B10001-…-768A1214`.
 - Tap **Notify** (subscribe); the value updates ~every 50 ms. The app shows it as
   bytes/hex — decode as UTF-8 to read the CSV line.
+
+> You can keep the phone subscribed while `ble_bridge.py` (or the UNO Q host bridge) runs
+> in parallel — the firmware supports up to 3 simultaneous centrals (see "Multiple
+> simultaneous clients" above).
 
 ### UNO Q gateway — `ble_bridge.py` (primary)
 ```bash

@@ -1,6 +1,6 @@
 """TimeSeriesStore Brick layer — persists samples to the App Lab time-series DB in batches.
 
-Writes each IMU sample as 9 separate time-series metrics via the brick:
+Writes each IMU sample as 7 separate time-series metrics via the brick:
     from arduino.app_bricks.dbstorage_tsstore import TimeSeriesStore
     db = TimeSeriesStore(); db.start()
     db.write_sample(metric_name, value)
@@ -31,8 +31,7 @@ from models import ImuSample
 _METRIC_MAP = {
     "ax": "ax_ms2", "ay": "ay_ms2", "az": "az_ms2",
     "gx": "gx_dps", "gy": "gy_dps", "gz": "gz_dps",
-    "acc_norm": "acc_norm", "gyro_norm": "gyro_norm",
-    "phase": "phase",
+    "pressure": "pressure_pa",
 }
 
 _QUEUE_CAP = TS_BATCH_MAX * 8   # drop-guard if the DB stalls (live view is unaffected)
@@ -43,6 +42,61 @@ def _log_once(tag: str, exc: Exception) -> None:
     if tag not in _logged:
         _logged.add(tag)
         print(f"[tsstore] {tag} failed: {exc} (further errors suppressed)", flush=True)
+
+
+# ---- brick row-shape adapters (cold-path read) ---------------------------
+# Empirically the App Lab TimeSeriesStore brick returns list[tuple(metric_name, iso_ts, value)]
+# on this UNO Q build (3-tuple). These helpers also cover dict / 2-tuple / attr shapes so a
+# future brick change doesn't silently break /api/export/history — instead we detect the shape
+# from length/type.
+def _extract_ts_ms(row, fallback) -> int:
+    """Return the row's timestamp in milliseconds (epoch), or `fallback` if unavailable."""
+    ts = None
+    if isinstance(row, dict):
+        ts = row.get("time") or row.get("timestamp") or row.get("ts")
+    elif isinstance(row, (tuple, list)):
+        if len(row) >= 3:           # (metric_name, ts, value) — App Lab brick shape
+            ts = row[1]
+        elif len(row) >= 1:         # (ts, value) — legacy 2-tuple
+            ts = row[0]
+    else:
+        ts = getattr(row, "time", None) or getattr(row, "timestamp", None) or getattr(row, "ts", None)
+    if ts is None:
+        return int(fallback)
+    # The brick may give a datetime, an ISO string, an epoch-seconds float, or an epoch-ms int.
+    try:
+        from datetime import datetime
+        if isinstance(ts, datetime):
+            return int(ts.timestamp() * 1000)
+        if isinstance(ts, str):
+            # `datetime.fromisoformat` accepts "YYYY-MM-DDTHH:MM:SS[.fff][+TZ]" — wide enough for
+            # InfluxDB-style outputs. Strip a trailing "Z" first since Python's parser predates it.
+            return int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
+        if isinstance(ts, (int, float)):
+            # Seconds vs ms heuristic: anything below year 2200 in ms is > 7e12, but a Unix-second
+            # value would be < 1e10. So values above 1e12 are already ms.
+            return int(ts if ts > 1e12 else ts * 1000)
+    except Exception:
+        pass
+    return int(fallback)
+
+
+def _extract_value(row):
+    """Pull the numeric value out of a row, agnostic to brick shape."""
+    if isinstance(row, dict):
+        return row.get("value") if "value" in row else row.get("v")
+    if isinstance(row, (tuple, list)):
+        if len(row) >= 3:           # (metric_name, ts, value)
+            return row[2]
+        if len(row) >= 2:           # (ts, value)
+            return row[1]
+        return None
+    return getattr(row, "value", None)
+
+
+def _samples_csv_header() -> str:
+    """Header-only CSV (matches the live store's columns) for an empty range."""
+    return "timestamp_ms,ax,ay,az,gx,gy,gz,pressure\r\n"
 
 
 class TsStore:
@@ -92,7 +146,7 @@ class TsStore:
             self._write_batch(batch)
 
     def _write_batch(self, batch: list[tuple[str | None, ImuSample]]) -> None:
-        """Write a batch of samples to the brick (9 metrics each). One flush = one batch.
+        """Write a batch of samples to the brick (7 metrics each). One flush = one batch.
 
         TODO(brick): if a bulk write_points / explicit-timestamp API is confirmed on hardware,
         swap it in here; the rest of the pipeline is unaffected.
@@ -117,6 +171,59 @@ class TsStore:
     def read_range(self, metric: str, start_from: str, end_to: str):
         """Historical samples in an ISO8601 time range (for future analytics)."""
         return self.db.read_samples(metric, start_from=start_from, end_to=end_to)
+
+    def read_range_csv(self, start_from: str, end_to: str,
+                       device_key: str | None = None) -> str:
+        """Cold-path CSV export: pull every metric over [start_from, end_to] and join into
+        Nano-CSV rows (timestamp_ms, ax, ay, az, gx, gy, gz, pressure).
+
+        The brick writes 7 metrics per sample with no explicit timestamp — DB rows land at
+        ~flush time (~1 s lag), and each sample's 7 metrics share a near-identical (but not
+        identical) timestamp. So we join by **ordinal index**, not by exact timestamp match:
+        the i-th `ax_ms2` row is the i-th `ay_ms2` row's sibling, etc. If any series is short
+        (write dropped, brick partial), we truncate to `min(len)` so columns stay aligned —
+        a noisy warning would be normal during the brick's settling moments, so we just log
+        once per session via `_log_once`.
+
+        The returned timestamp column is the **DB row's** ts (millisecond epoch when available)
+        — not the Nano's `timestamp_ms` (which the brick never saw). For the live buffer use
+        `SampleStore.to_csv_range`; this CSV is the only way to get history beyond ~30 s.
+
+        Brick return shape is not verifiable off-device — `_extract_ts_value` accepts the
+        common variants (tuple, dict, custom object with attributes), so the join keeps working
+        if the brick changes its return without us updating here.
+        """
+        prefix = f"{device_key}." if device_key else ""
+        fields = ["ax", "ay", "az", "gx", "gy", "gz", "pressure"]   # mirrors ImuSample columns
+        series: dict[str, list] = {}
+        for f in fields:
+            metric = f"{prefix}{_METRIC_MAP[f]}"
+            try:
+                rows = self.db.read_samples(metric, start_from=start_from, end_to=end_to) or []
+            except Exception as exc:
+                _log_once(f"read_samples({metric})", exc)
+                rows = []
+            series[f] = rows
+        # Align to the shortest series so rows stay rectangular.
+        n = min((len(rows) for rows in series.values()), default=0)
+        if n == 0:
+            return _samples_csv_header()
+        # Pick the ax series' timestamps as the row clock (any series works; ax has no special
+        # meaning). Fall back to a synthetic 0..n-1 if the brick returns valueless points.
+        ts_rows = series["ax"][:n]
+
+        import csv as _csv
+        import io as _io
+        buf = _io.StringIO()
+        w = _csv.DictWriter(buf, fieldnames=["timestamp_ms", *fields])
+        w.writeheader()
+        for i in range(n):
+            ts_ms = _extract_ts_ms(ts_rows[i], fallback=i)
+            row = {"timestamp_ms": ts_ms}
+            for f in fields:
+                row[f] = _extract_value(series[f][i])
+            w.writerow(row)
+        return buf.getvalue()
 
     def stop(self) -> None:
         """Stop the flush thread, drain the queue once more, then stop the brick."""

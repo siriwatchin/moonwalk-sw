@@ -14,8 +14,16 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
+# Node / frontend tooling
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
 # Build / archive artifacts
 hardware.zip
+*.md
 .env
 .netlify/
 .claude/

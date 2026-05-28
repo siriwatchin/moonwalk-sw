@@ -4,8 +4,8 @@ App Lab launches this with its Run button and passes no arguments, so the mode i
 constant. Just run `python python/main.py`; change behaviour by editing config.py.
 
 config.APP_MODE:
-    "dashboard" -> start the WebUI + TimeSeriesStore dashboard and apply config.STARTUP_SLOTS.
-    "empty"     -> start the dashboard with both slots unbound (add sources from the UI).
+    "dashboard" -> start the WebUI + TimeSeriesStore dashboard and apply config.STARTUP_SOURCE.
+    "empty"     -> start the dashboard with no active source (pick one from the UI).
     "scan"      -> list nearby BLE devices and exit. No bricks imported.
     "debug"     -> connect to the Nano and print every parsed sample + Hz. No bricks imported.
 
@@ -140,8 +140,7 @@ async def debug_stream(device, seconds: float | None) -> None:
             _dbg(f"OK   ts={sample.timestamp_ms} "
                  f"ax={sample.ax:+.3f} ay={sample.ay:+.3f} az={sample.az:+.3f} "
                  f"gx={sample.gx:+.2f} gy={sample.gy:+.2f} gz={sample.gz:+.2f} "
-                 f"acc_norm={sample.acc_norm:.3f} gyro_norm={sample.gyro_norm:.3f} "
-                 f"phase={sample.phase}({sample.phase_label})")
+                 f"p={sample.pressure:.1f}")
 
         now = time.monotonic()
         elapsed = now - stats["last_report"]
@@ -213,7 +212,7 @@ def run_dashboard(empty: bool) -> None:
     The brick imports stay deferred to here so `scan`/`debug` modes — and any off-device
     `import main` — never pull in the App-Lab-only bricks.
     """
-    from config import BUFFER_MAXLEN, STARTUP_SLOTS, UI_PORT
+    from config import BUFFER_MAXLEN, STARTUP_SOURCE, UI_PORT
     from registry import DeviceRegistry
 
     registry = DeviceRegistry(maxlen=BUFFER_MAXLEN)
@@ -222,21 +221,60 @@ def run_dashboard(empty: bool) -> None:
     from ts_store import TsStore
     tsstore = TsStore()
 
-    # SourceManager owns the concurrent per-slot sources + ingest workers.
+    # SourceManager owns the one active source + its ingest worker.
     from source_manager import SourceManager
     mgr = SourceManager(registry, tsstore)
     if not empty:
-        for slot, cfg in STARTUP_SLOTS.items():
-            mgr.set_slot(slot, cfg.get("kind", "none"),
-                         gait=cfg.get("gait", "normal"),
-                         address=cfg.get("address"), label=cfg.get("label"))
+        mgr.set_source(STARTUP_SOURCE.get("kind", "none"),
+                       gait=STARTUP_SOURCE.get("gait", "normal"),
+                       address=STARTUP_SOURCE.get("address"),
+                       label=STARTUP_SOURCE.get("label"))
 
-    # WebUI Brick: register the /api/* routes (read + control).
+    # Analysis service (cold-path; reads InfluxDB directly via influx_client.py). Constructed
+    # lazily — the client doesn't hit the wire until the first /api/analysis/* call, so an
+    # InfluxDB that's slow/unreachable at boot doesn't delay App.run(). If the *construction*
+    # itself raises (bad config), we still want the dashboard up: log and pass None, which
+    # makes /api/analysis/* return 503 while the realtime path stays alive.
+    analysis = None
+    try:
+        from influx_client import InfluxClient
+        from analysis import AnalysisParams, AnalysisService
+        influx = InfluxClient(
+            url=config.INFLUX_URL,
+            username=config.INFLUX_USER,
+            password=config.INFLUX_PASSWORD,
+            token=config.INFLUX_TOKEN,
+            db=config.INFLUX_DB,
+            bucket=config.INFLUX_BUCKET,
+            org=config.INFLUX_ORG,
+            measurement=config.INFLUX_MEASUREMENT,
+            timeout_s=config.INFLUX_TIMEOUT_S,
+        )
+        analysis = AnalysisService(
+            influx,
+            params=AnalysisParams(
+                plant_gyro_dps=config.PLANT_GYRO_DPS,
+                plant_refractory_ms=config.PLANT_REFRACTORY_MS,
+                stick_length_m=config.STICK_LEN_M,
+                p_tare_pa=config.P_TARE_PA,
+                wsfc_target_pct=config.WSFC_TARGET_PCT,
+            ),
+            downsample_ms=config.ANALYSIS_DOWNSAMPLE_MS,
+            default_duration_s=config.ANALYSIS_DEFAULT_DURATION_S,
+        )
+        print(f"[main] analysis ready (InfluxDB at {config.INFLUX_URL})", flush=True)
+    except Exception as exc:
+        print(f"[main] analysis disabled: {exc!r} — /api/analysis/* will 503", flush=True)
+
+    # WebUI Brick: register the /api/* routes (read + control). tsstore is passed in so
+    # /api/export/history can serve cold-path range exports (CSV modal in the dashboard).
+    # analysis is passed in so /api/analysis/* can compute reports over windows of the same
+    # InfluxDB data; None ⇒ those routes return 503.
     from webui_server import WebUIServer
-    _server = WebUIServer(registry, mgr)  # noqa: F841
+    _server = WebUIServer(registry, mgr, tsstore=tsstore, analysis=analysis)  # noqa: F841
 
     print(f"UNO Q IMU dashboard starting (port={UI_PORT}, "
-          f"{'empty' if empty else 'STARTUP_SLOTS'})", flush=True)
+          f"{'empty' if empty else 'STARTUP_SOURCE'})", flush=True)
     from arduino.app_utils import App
     try:
         App.run()         # starts all bricks (WebUI + TimeSeriesStore) and blocks

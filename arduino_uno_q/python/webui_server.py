@@ -6,51 +6,238 @@ endpoints (one JSON blob keyed by device) and POSTs control actions. No Socket.I
 Confirmed brick API:
     web = WebUI()
     web.expose_api("GET", "/api/state", handler)    # GET handler: handler(_req=None)->dict
-    web.expose_api("POST", "/led", handler)          # POST handler: handler(data)->dict (data=JSON body)
+    # expose_api hands `function` straight to FastAPI's add_api_route, so the handler signature
+    # IS the FastAPI signature. To read a POST's JSON body, the param MUST be declared with
+    # Body() (e.g. `data: dict = Body(default=None)`); a plain `data=None` becomes a *query*
+    # param and the JSON body is silently dropped (slot stays unchanged).
     # started by arduino.app_utils.App.run(); static assets served from assets/; port 7000
 """
 
 from __future__ import annotations
 
+import re
+import time
+from urllib.parse import quote
+
+from config import ANALYSIS_DEFAULT_DURATION_S, RECENT_POINTS
 from registry import DeviceRegistry
+from source_manager import ACTIVE   # single internal storage key for the active source
 
 
 class WebUIServer:
     """Registers the dashboard REST API on the WebUI brick (multi-device)."""
 
-    def __init__(self, registry: DeviceRegistry, manager):
+    def __init__(self, registry: DeviceRegistry, manager, tsstore=None, analysis=None):
         from arduino.app_bricks.web_ui import WebUI  # required — UNO Q / App Lab only
 
         self.reg = registry
         self.mgr = manager
+        # tsstore is optional so existing call sites that don't yet pass it (e.g. tests / old
+        # off-device probes) keep working. /api/export/history will 503 in that case.
+        self.tsstore = tsstore
+        # analysis is also optional — main.py passes None if InfluxDB is unreachable at boot
+        # so the dashboard still starts. /api/analysis/* will 503 in that case.
+        self.analysis = analysis
         self.ui = WebUI()
         self._register_api()
 
     def _register_api(self) -> None:
         ui, reg, mgr = self.ui, self.reg, self.mgr
+        # FastAPI ships with the WebUI brick (UNO Q only). Lazy import keeps off-device
+        # `import webui_server` brick-free. POST bodies MUST be declared with Body(), or
+        # FastAPI treats a plain-default param as a *query* param and the JSON body is dropped.
+        from fastapi import Body, Query
+        from fastapi.responses import Response
 
-        # ---- GET: read state (keyed by slot "A"/"B"; no query params) -----
-        ui.expose_api("GET", "/api/status", lambda _req=None: {
-            **mgr.state(),                 # scan_devices, slots{A,B}
-            "devices_status": reg.status(),  # per-slot buffer/ingest stats
+        # ---- GET: read the one active source's state (no slots) -----------
+        def _status(_req=None):
+            dev = reg.get(ACTIVE)
+            return {
+                **mgr.state(),                                   # scan_devices, source{...}
+                "source_status": dev.store.status() if dev else {},  # buffer/ingest data quality
+            }
+        ui.expose_api("GET", "/api/status", _status)
+        ui.expose_api("GET", "/api/latest", lambda _req=None: {
+            "latest": (reg.get(ACTIVE).store.latest() if reg.get(ACTIVE) else None),
         })
-        ui.expose_api("GET", "/api/latest", lambda _req=None: {"devices": reg.latest()})
-        ui.expose_api("GET", "/api/series", lambda _req=None: {"devices": reg.series()})
+
+        # Incremental realtime read (the hot path the browser polls). Reads the in-memory buffer
+        # only — never InfluxDB. since_seq/limit are taken as raw strings and parsed/clamped in
+        # samples_since(), so junk params can't 422 or crash; missing -> latest window.
+        def _samples(since_seq: str | None = None, limit: str | None = None):
+            dev = reg.get(ACTIVE)
+            if dev is None:
+                return {"latest_seq": 0, "samples": []}
+            return dev.store.samples_since(since_seq, limit if limit is not None else RECENT_POINTS)
+        ui.expose_api("GET", "/api/samples", _samples)
+
+        # Download the active source's rolling buffer (~30 s) as a CSV file.
+        # Optional time-range params (from_ms / to_ms over the Nano timestamp_ms axis) let the
+        # CSV modal slice the buffer into "Last 10 s" / "Last 30 s" — same data the live charts
+        # are reading. No params -> whole buffer (backwards compat: `curl /api/export` still works).
+        def _export(from_ms: str | None = None, to_ms: str | None = None):
+            dev = reg.get(ACTIVE)
+            label = dev.label if dev else "source"
+            safe = re.sub(r"[^A-Za-z0-9_-]+", "_", label).strip("_") or "source"
+            stem = "buf"
+            if from_ms is not None and to_ms is not None and dev is not None:
+                # Tolerate junk params: any parse failure falls back to whole buffer.
+                try:
+                    a = int(from_ms); b = int(to_ms)
+                    csv_text = dev.store.to_csv_range(a, b)
+                    stem = f"range{max(0, (b - a) // 1000)}s"
+                except (TypeError, ValueError):
+                    csv_text = reg.csv(ACTIVE)
+            else:
+                csv_text = reg.csv(ACTIVE)
+            fname = f"moonwalk_{safe}_{stem}_{time.strftime('%Y%m%d-%H%M%S')}.csv"
+            return Response(content=csv_text, media_type="text/csv",
+                            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+        ui.expose_api("GET", "/api/export", _export)
+
+        # Cold-path export from the TimeSeriesStore (InfluxDB) — the only path to data older
+        # than ~30 s. `from`/`to` are ISO8601 strings (the browser sends `Date#toISOString()`,
+        # which is UTC); we pass them through verbatim to the brick. The active source's
+        # device_key drives the metric prefix so other devices don't bleed in (single-active-
+        # source today; this stays correct if multi-device returns later).
+        def _export_history(
+            start: str = Query(default="", alias="from"),
+            end: str = Query(default="", alias="to"),
+        ):
+            # `from` is a Python keyword so we accept it under the alias and bind to `start`.
+            if not start or not end:
+                return Response(content="missing from/to (ISO8601)", status_code=400,
+                                media_type="text/plain")
+            if self.tsstore is None:
+                return Response(content="time-series store not available",
+                                status_code=503, media_type="text/plain")
+            dev = reg.get(ACTIVE)
+            label = dev.label if dev else "history"
+            safe = re.sub(r"[^A-Za-z0-9_-]+", "_", label).strip("_") or "history"
+            try:
+                csv_text = self.tsstore.read_range_csv(start, end, device_key=ACTIVE)
+            except Exception as exc:
+                # Brick errors shouldn't 500 the request — return an empty CSV with a hint header.
+                print(f"[webui] /api/export/history failed: {exc}", flush=True)
+                csv_text = "timestamp_ms,ax,ay,az,gx,gy,gz,pressure\r\n"
+            fname = f"moonwalk_{safe}_history_{time.strftime('%Y%m%d-%H%M%S')}.csv"
+            return Response(content=csv_text, media_type="text/csv",
+                            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+        ui.expose_api("GET", "/api/export/history", _export_history)
+
+        # ---- Analysis (cold-path; reads InfluxDB directly via influx_client.py) ----
+        # Three GETs; all 503 if `self.analysis is None` (InfluxDB unreachable at boot or
+        # auth bad). Realtime endpoints stay alive in that state — the dashboard's live view
+        # is unaffected, only the Analysis tab degrades.
+
+        def _analysis_window(
+            start: str = Query(default="", alias="from"),
+            end: str = Query(default="", alias="to"),
+            device: str = Query(default=ACTIVE),
+        ):
+            # `from` is a Python keyword so we accept it under the alias and bind to `start`
+            # — same pattern as /api/export/history (consistent for the frontend).
+            if not start or not end:
+                return Response(content="missing from/to (ISO8601)", status_code=400,
+                                media_type="text/plain")
+            if self.analysis is None:
+                return Response(content="analysis service unavailable (InfluxDB unreachable)",
+                                status_code=503, media_type="text/plain")
+            try:
+                return self.analysis.compute(start, end, device_key=device)
+            except Exception as exc:
+                print(f"[webui] /api/analysis/window failed: {exc}", flush=True)
+                return Response(content=f"analysis failed: {exc}", status_code=500,
+                                media_type="text/plain")
+        ui.expose_api("GET", "/api/analysis/window", _analysis_window)
+
+        def _analysis_latest(
+            duration_s: str = Query(default=str(ANALYSIS_DEFAULT_DURATION_S)),
+            device: str = Query(default=ACTIVE),
+        ):
+            if self.analysis is None:
+                return Response(content="analysis service unavailable (InfluxDB unreachable)",
+                                status_code=503, media_type="text/plain")
+            try:
+                dur = int(duration_s)
+            except (TypeError, ValueError):
+                dur = ANALYSIS_DEFAULT_DURATION_S
+            try:
+                return self.analysis.latest(duration_s=dur, device_key=device)
+            except Exception as exc:
+                print(f"[webui] /api/analysis/latest failed: {exc}", flush=True)
+                return Response(content=f"analysis failed: {exc}", status_code=500,
+                                media_type="text/plain")
+        ui.expose_api("GET", "/api/analysis/latest", _analysis_latest)
+
+        def _analysis_health(_req=None):
+            # Returns {available, version, db|bucket, params} so the frontend can render a
+            # clear "Analysis offline" message instead of a generic 503.
+            if self.analysis is None:
+                return {"available": False, "reason": "service not constructed (Influx unreachable at boot)"}
+            try:
+                return {"available": True, "influx": self.analysis.health(),
+                        "params": self.analysis.params_dict()}
+            except Exception as exc:
+                return {"available": False, "reason": str(exc)}
+        ui.expose_api("GET", "/api/analysis/health", _analysis_health)
+
+        def _analysis_labels(_req=None):
+            # List the device-key prefixes that have data in InfluxDB. Used by the Analysis
+            # tab's device dropdown so the user can switch between A / B / future devices
+            # without poking the URL. 503 if the analysis service is unavailable (same as
+            # the other /api/analysis/* routes; the realtime path stays alive).
+            if self.analysis is None:
+                return Response(content="analysis service unavailable",
+                                status_code=503, media_type="text/plain")
+            try:
+                devices = self.analysis.list_devices() or []
+            except Exception as exc:
+                print(f"[webui] /api/analysis/labels failed: {exc}", flush=True)
+                return Response(content=f"labels probe failed: {exc}",
+                                status_code=500, media_type="text/plain")
+            return {
+                "devices": devices,
+                "default": ACTIVE if ACTIVE in devices else (devices[0] if devices else None),
+            }
+        ui.expose_api("GET", "/api/analysis/labels", _analysis_labels)
+
+        # Download the last finished recording (start→stop session) as a CSV file. The browser
+        # navigates here right after POST /api/record/stop. Recording state is in /api/status.
+        def _record_download():
+            fname = mgr.record_filename()              # the user's label + ".csv" (may be non-ASCII)
+            # RFC 5987: ASCII fallback for old clients + UTF-8 form so Thai/spaces survive.
+            ascii_name = fname.encode("ascii", "replace").decode("ascii").replace("?", "_")
+            cd = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(fname, safe='')}"
+            return Response(content=mgr.record_csv(), media_type="text/csv",
+                            headers={"Content-Disposition": cd})
+        ui.expose_api("GET", "/api/record/download", _record_download)
 
         # ---- POST: control actions (handlers receive the JSON body dict) -
         ui.expose_api("POST", "/api/clear", lambda data=None: {
             "cleared": True, "removed": reg.clear_buffers(),
         })
-        # Set a slot's source: {"slot":"A"|"B","kind":"none"|"mock"|"ble",
-        #                       "gait":"normal"|"altered","address":<opt>,"label":<opt>}
-        ui.expose_api("POST", "/api/slot/set", lambda data=None: mgr.set_slot(
-            (data or {}).get("slot"), (data or {}).get("kind", "none"),
-            gait=(data or {}).get("gait", "normal"),
-            address=(data or {}).get("address"), label=(data or {}).get("label"),
-        ))
-        # Reset both slots to the demo pair (A=normal, B=injured)
+        # Set the one active source: {"kind":"none"|"mock"|"ble",
+        #                             "gait":"normal"|"altered","address":<opt>,"label":<opt>}
+        def _set_source(data: dict = Body(default=None)):
+            d = data or {}
+            return mgr.set_source(
+                d.get("kind", "none"),
+                gait=d.get("gait", "normal"),
+                address=d.get("address"), label=d.get("label"),
+            )
+        ui.expose_api("POST", "/api/source/set", _set_source)
+        # Reset to the demo source (a single mock 'normal' gait)
         ui.expose_api("POST", "/api/reset", lambda data=None: mgr.reset())
         # Scan for BLE devices -> {"devices":[{name,address}]}
-        ui.expose_api("POST", "/api/ble/scan", lambda data=None: {
-            "devices": mgr.scan(float((data or {}).get("timeout", 8.0))),
-        })
+        def _ble_scan(data: dict = Body(default=None)):
+            return {"devices": mgr.scan(float((data or {}).get("timeout", 8.0)))}
+        ui.expose_api("POST", "/api/ble/scan", _ble_scan)
+
+        # Start a session recording of the active source: {"label":<name>}
+        def _record_start(data: dict = Body(default=None)):
+            d = data or {}
+            return mgr.record_start(d.get("label", "rec"))
+        ui.expose_api("POST", "/api/record/start", _record_start)
+        # Stop the active recording (the finished CSV is then at GET /api/record/download)
+        ui.expose_api("POST", "/api/record/stop", lambda data=None: mgr.record_stop())
