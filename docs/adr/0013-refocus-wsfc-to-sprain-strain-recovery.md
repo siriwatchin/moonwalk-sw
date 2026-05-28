@@ -19,16 +19,25 @@ established about the *mechanism* (per-step Handle Load → target band → real
   Soft-tissue injury is the largest such population.
 - *Optimal loading is the established healing principle.* Modern soft-tissue rehab replaced rest-only
   **PRICE** with **POLICE** — *Protection, **Optimal Loading**, Ice, Compression, Elevation* (Bleakley,
-  Glasgow & MacAuley, *BJSM* 2012). Controlled, progressive mechanical load is a **healing stimulus**:
-  too little (over-protecting / guarding) delays recovery and causes stiffness and deconditioning; too
-  much risks re-injury. The recovery-rate win is keeping the patient inside the prescribed loading
-  progression. *(Citation to be verified and added to `rehab/`; DOI ~10.1136/bjsports-2011-090297.)*
+  Glasgow & MacAuley, *"PRICE needs updating, should we call the POLICE?"*, *BJSM* 2012;46(4):220–221,
+  DOI [10.1136/bjsports-2011-090297]; verified). The biological premise — mechanical load drives tissue
+  repair — is **mechanotherapy** (Khan & Scott, *BJSM* 2009, DOI [10.1136/bjsm.2008.054239]). Controlled,
+  progressive load is a **healing stimulus**: too little (over-protecting / guarding) delays recovery and
+  causes stiffness and deconditioning — a functional-treatment-vs-immobilization meta-analysis for acute
+  ankle sprains favours early controlled loading (Vílchez-Cavazos et al., *J Bodyw Mov Ther* 2025, DOI
+  [10.1016/j.jbmt.2025.05.035]); too much risks re-injury. The recovery-rate win is keeping the patient
+  inside the prescribed loading progression. Full citations in
+  [`rehab/recovery-evidence.md`](../../rehab/recovery-evidence.md).
 - *The bedside gap is the same one ADR-0009 named.* A clinician can only give vague verbal cues ("put
   a bit more weight on it / don't baby it") because cane offloading isn't quantified at the bedside, and
   patients estimate their own weight-bearing poorly (Dabke 2004). The WSFC quantifies and coaches it.
 - *White space, honestly.* As with ADR-0009, no published RCT pairs a force-sensing cane + biofeedback
-  + an adherence layer for **sprain/strain recovery**. We cite the *optimal-loading principle*, not a
-  cane-for-sprain recovery trial (none exists). The pitch remains *generating* that evidence.
+  + an adherence layer for **sprain/strain recovery**. The Resch et al. 2025 scoping review (*Smart
+  Walking Aids with Sensor Technology…*, *Technologies* 13:346) confirms instrumented-aid studies report
+  only sensor/measurement accuracy, never recovery outcomes; load-biofeedback recovery RCTs exist but for
+  fractures/insoles, not a clip-on cane (see [`rehab/recovery-evidence.md`](../../rehab/recovery-evidence.md)).
+  We cite the *optimal-loading principle*, not a cane-for-sprain recovery trial (none exists). The pitch
+  remains *generating* that evidence.
 
 ## Decisions
 
@@ -77,6 +86,10 @@ established about the *mechanism* (per-step Handle Load → target band → real
 ## Status
 
 accepted. Supersedes the target-population decision of [ADR-0009] (its mechanism, claim-safety, and
-hardware decisions remain in force). Pending follow-ups: update `rehab/` evidence files from
-stroke RCTs to optimal-loading literature; verify the POLICE citation/DOI; a Thailand impact section
-scoped to the cane-using sprain/strain subset.
+hardware decisions remain in force). Pending follow-ups: a Thailand impact section scoped to the
+cane-using sprain/strain subset; the team's own recovery-rate validation (the evidence the WSFC aims
+to generate).
+
+[10.1136/bjsports-2011-090297]: https://doi.org/10.1136/bjsports-2011-090297
+[10.1136/bjsm.2008.054239]: https://doi.org/10.1136/bjsm.2008.054239
+[10.1016/j.jbmt.2025.05.035]: https://doi.org/10.1016/j.jbmt.2025.05.035
