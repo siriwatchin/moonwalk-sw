@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { AddDeviceOverlay } from "@/components/moonwalk/add-device-overlay";
 import { BiofeedbackPage } from "@/components/moonwalk/biofeedback-page";
@@ -12,6 +12,8 @@ import { SettingsPage } from "@/components/moonwalk/settings-page";
 import { SignalsPage } from "@/components/moonwalk/signals-page";
 import { useBluetoothDevice } from "@/hooks/use-bluetooth-device";
 import { useMounted } from "@/hooks/use-mounted";
+import { calculateBiofeedbackMetrics } from "@/lib/biofeedback-metrics";
+import type { NanoImuSample } from "@/lib/nano-imu";
 import { devices, type DeviceId, type PageId } from "@/components/moonwalk-data";
 
 export default function MoonWalkApp() {
@@ -21,15 +23,43 @@ export default function MoonWalkApp() {
   const [isDeviceMenuOpen, setIsDeviceMenuOpen] = useState(false);
   const [isAddDeviceOpen, setIsAddDeviceOpen] = useState(false);
   const [isBluetoothOpen, setIsBluetoothOpen] = useState(false);
+  const [sampleHistory, setSampleHistory] = useState<NanoImuSample[]>([]);
   const bluetooth = useBluetoothDevice();
 
   const selectedDeviceLabel = devices.find(
     (device) => device.id === selectedDevice,
   )?.label;
+  const biofeedbackMetrics = useMemo(
+    () => calculateBiofeedbackMetrics(sampleHistory),
+    [sampleHistory],
+  );
+
+  useEffect(() => {
+    const nextSample = bluetooth.latestSample;
+
+    if (!nextSample) {
+      return;
+    }
+
+    setSampleHistory((current) => {
+      const latest = current.at(-1);
+
+      if (latest?.timestamp_ms === nextSample.timestamp_ms) {
+        return current;
+      }
+
+      return [...current.slice(-499), nextSample];
+    });
+  }, [bluetooth.latestSample]);
 
   const content = useMemo(() => {
     if (activePage === "biofeedback") {
-      return <BiofeedbackPage selectedDevice={selectedDevice} />;
+      return (
+        <BiofeedbackPage
+          metrics={biofeedbackMetrics}
+          selectedDevice={selectedDevice}
+        />
+      );
     }
 
     if (activePage === "signals") {
@@ -61,6 +91,7 @@ export default function MoonWalkApp() {
     );
   }, [
     activePage,
+    biofeedbackMetrics,
     bluetooth.badPacketCount,
     bluetooth.isConnected,
     bluetooth.latestSample,

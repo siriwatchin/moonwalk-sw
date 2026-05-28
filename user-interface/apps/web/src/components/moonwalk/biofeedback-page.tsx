@@ -12,11 +12,14 @@ import { useEffect, useState } from "react";
 import { devices, type DeviceId } from "@/components/moonwalk-data";
 import { GridPanel } from "@/components/moonwalk/panel";
 import { UsageMeter } from "@/components/moonwalk/usage-meter";
+import type { BiofeedbackMetrics } from "@/lib/biofeedback-metrics";
 import { formatSessionTime } from "@/lib/format";
 
 export function BiofeedbackPage({
+  metrics,
   selectedDevice,
 }: {
+  metrics: BiofeedbackMetrics;
   selectedDevice: DeviceId;
 }) {
   const deviceLabel =
@@ -34,30 +37,49 @@ export function BiofeedbackPage({
   const liveCadence = 82 + (elapsedSeconds % 5) - 2;
   const liveRhythm = 86 + (elapsedSeconds % 3);
   const liveDuty = 41 + (elapsedSeconds % 4);
+  const cadenceValue = metrics.cadenceSpm
+    ? Math.round(metrics.cadenceSpm)
+    : liveCadence;
+  const rhythmValue = metrics.rhythmScore
+    ? Math.round(metrics.rhythmScore)
+    : liveRhythm;
+  const dutyValue = metrics.dutyFactorPercent
+    ? Math.round(metrics.dutyFactorPercent)
+    : liveDuty;
+  const confidenceValue = Math.round(metrics.confidence * 100);
+  const dataQualityValue = metrics.sampleCount > 0 ? confidenceValue : 94;
+  const qualityLabel =
+    metrics.sampleCount === 0 ? "ดี" : confidenceValue >= 70 ? "ดี" : "กำลังอ่าน";
+  const recommendation =
+    metrics.action === "ลงน้ำหนักมาก"
+      ? "ลดแรงกดที่ด้ามจับเล็กน้อย"
+      : metrics.action === "จังหวะไม่สม่ำเสมอ"
+        ? "ชะลอและรักษาจังหวะให้เท่ากัน"
+        : "เดินต่ออีก 2 นาทีด้วยจังหวะเดิม";
   const timeProgress = Math.min(96, Math.round((elapsedSeconds / 720) * 100));
   const liveFeedbackCards = [
     {
       label: "Cadence",
-      value: String(liveCadence),
+      value: String(cadenceValue),
       unit: "รอบ/นาที",
       icon: Footprints,
     },
     {
       label: "Rhythm",
-      value: String(liveRhythm),
+      value: String(rhythmValue),
       unit: "/100",
       icon: Waves,
     },
     {
       label: "Duty factor",
-      value: String(liveDuty),
+      value: String(dutyValue),
       unit: "%",
       icon: Activity,
     },
     {
       label: "Action",
-      value: "เดินต่อเนื่อง",
-      unit: `${92 + (elapsedSeconds % 2)}%`,
+      value: metrics.action,
+      unit: `${dataQualityValue}%`,
       icon: Brain,
     },
   ];
@@ -98,7 +120,7 @@ export function BiofeedbackPage({
               คุณภาพ
             </p>
             <p className="mt-1 text-lg font-bold leading-none text-moonwalk-teal">
-              ดี
+              {qualityLabel}
             </p>
           </div>
         </div>
@@ -106,10 +128,13 @@ export function BiofeedbackPage({
 
       <GridPanel className="bg-moonwalk-navy p-2 text-moonwalk-white dark:border-moonwalk-white">
         <p className="text-xs text-moonwalk-silver">Biofeedback now</p>
-        <h2 className="mt-1 text-xl font-bold leading-none">คงจังหวะนี้ไว้</h2>
+        <h2 className="mt-1 text-xl font-bold leading-none">
+          {metrics.action === "เริ่มเก็บข้อมูล" ? "กำลังอ่านสัญญาณ" : "คงจังหวะนี้ไว้"}
+        </h2>
         <p className="mt-2 line-clamp-2 text-xs leading-5 text-moonwalk-silver">
-          ระบบเห็นรูปแบบการเดินต่อเนื่องและจังหวะค่อนข้างสม่ำเสมอ
-          ไม่ต้องเร่งความเร็ว
+          {metrics.sampleCount > 0
+            ? `อ่าน ${metrics.sampleCount} ตัวอย่าง แกนสวิง ${metrics.swingAxis.toUpperCase()} โหลด ${Math.round(metrics.loadPercent)}%`
+            : "ระบบเห็นรูปแบบการเดินต่อเนื่องและจังหวะค่อนข้างสม่ำเสมอ ไม่ต้องเร่งความเร็ว"}
         </p>
       </GridPanel>
 
@@ -152,12 +177,12 @@ export function BiofeedbackPage({
           />
           <UsageMeter
             label="ความสม่ำเสมอของจังหวะ"
-            value={liveRhythm}
+            value={rhythmValue}
             helper="คะแนนนี้เทียบกับ baseline ส่วนตัว"
           />
           <UsageMeter
             label="ความพร้อมของข้อมูล"
-            value={94}
+            value={dataQualityValue}
             helper="Bluetooth และ sample rate อยู่ในช่วงดี"
           />
         </div>
@@ -170,7 +195,7 @@ export function BiofeedbackPage({
               คำแนะนำถัดไป
             </p>
             <p className="truncate text-base font-bold leading-none">
-              เดินต่ออีก 2 นาทีด้วยจังหวะเดิม
+              {recommendation}
             </p>
           </div>
           <ChevronRight
