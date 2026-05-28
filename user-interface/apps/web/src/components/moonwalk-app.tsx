@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { AddDeviceOverlay } from "@/components/moonwalk/add-device-overlay";
 import { BiofeedbackPage } from "@/components/moonwalk/biofeedback-page";
+import { BluetoothConnectOverlay } from "@/components/moonwalk/bluetooth-connect-overlay";
 import { BottomNav } from "@/components/moonwalk/bottom-nav";
 import { StickyDeviceBar } from "@/components/moonwalk/device-bar";
 import { HomePage } from "@/components/moonwalk/home-page";
@@ -18,6 +19,7 @@ export default function MoonWalkApp() {
   const [selectedDevice, setSelectedDevice] = useState<DeviceId>("cane");
   const [isDeviceMenuOpen, setIsDeviceMenuOpen] = useState(false);
   const [isAddDeviceOpen, setIsAddDeviceOpen] = useState(false);
+  const [isBluetoothOpen, setIsBluetoothOpen] = useState(false);
   const bluetooth = useBluetoothDevice();
 
   const selectedDeviceLabel = devices.find(
@@ -86,7 +88,7 @@ export default function MoonWalkApp() {
           bluetoothError={bluetooth.error}
           bluetoothState={bluetooth.state}
           isBluetoothPending={bluetooth.isPending}
-          onBluetoothConnect={bluetooth.connect}
+          onBluetoothConnect={() => setIsBluetoothOpen(true)}
           onBluetoothDisconnect={bluetooth.disconnect}
         />
 
@@ -101,6 +103,21 @@ export default function MoonWalkApp() {
 
       {isAddDeviceOpen ? (
         <AddDeviceOverlay onClose={() => setIsAddDeviceOpen(false)} />
+      ) : null}
+
+      {isBluetoothOpen ? (
+        <BluetoothConnectOverlay
+          connectedDevice={bluetooth.device}
+          error={bluetooth.error}
+          isPending={bluetooth.isPending}
+          knownDevices={bluetooth.knownDevices}
+          onClose={() => setIsBluetoothOpen(false)}
+          onConnect={bluetooth.connect}
+          onConnectKnownDevice={bluetooth.connectKnownDevice}
+          onDisconnect={bluetooth.disconnect}
+          onRefreshKnownDevices={bluetooth.refreshKnownDevices}
+          state={bluetooth.state}
+        />
       ) : null}
     </main>
   );

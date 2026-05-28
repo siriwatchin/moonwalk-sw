@@ -44,6 +44,7 @@ interface BluetoothDevice extends EventTarget {
 
 interface Bluetooth extends EventTarget {
   getAvailability?(): Promise<boolean>;
+  getDevices?(): Promise<BluetoothDevice[]>;
   requestDevice(options: RequestDeviceOptions): Promise<BluetoothDevice>;
 }
 
