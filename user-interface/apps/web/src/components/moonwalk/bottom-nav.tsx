@@ -1,0 +1,37 @@
+"use client";
+
+import { pages, type PageId } from "@/components/moonwalk-data";
+import { cn } from "@user-interface/ui/lib/utils";
+
+export function BottomNav({
+  activePage,
+  onPageChange,
+}: {
+  activePage: PageId;
+  onPageChange: (page: PageId) => void;
+}) {
+  return (
+    <nav
+      className="font-line-seed-th fixed inset-x-0 bottom-0 z-20 border-t border-moonwalk-navy bg-moonwalk-white p-0 pb-[env(safe-area-inset-bottom)] text-moonwalk-navy dark:border-moonwalk-white dark:bg-moonwalk-navy dark:text-moonwalk-white"
+      aria-label="หน้าหลัก Moon Walk"
+    >
+      <div className="mx-auto grid max-w-md grid-cols-3 border-x border-moonwalk-navy dark:border-moonwalk-white">
+        {pages.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            className={cn(
+              "flex min-h-14 flex-col items-center justify-center gap-0.5 border-r border-moonwalk-navy px-1 text-sm font-bold leading-none last:border-r-0 dark:border-moonwalk-white",
+              activePage === id &&
+                "bg-moonwalk-navy text-moonwalk-white dark:bg-moonwalk-white dark:text-moonwalk-navy",
+            )}
+            onClick={() => onPageChange(id)}
+          >
+            <Icon className="size-4" aria-hidden="true" />
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
