@@ -49,6 +49,15 @@ function getBluetoothCopy(
     };
   }
 
+  if (state === "ios-unsupported") {
+    return {
+      label: "บลูทูธบน iOS ต้องใช้แอปช่วย",
+      detail: "Safari บน iPhone/iPad ไม่รองรับ Web Bluetooth โดยตรง",
+      action: "ดูวิธีใช้",
+      live: "iOS",
+    };
+  }
+
   if (state === "unsupported") {
     return {
       label: "Bluetooth ไม่พร้อมใช้งาน",
@@ -106,7 +115,7 @@ export function StickyDeviceBar({
     devices.find((device) => device.id === selectedDevice) ?? devices[0];
   const bluetoothCopy = getBluetoothCopy(bluetoothState, bluetoothDevice);
   const isBluetoothConnected = bluetoothState === "connected";
-  const canUseBluetooth = bluetoothState !== "unsupported";
+  const canOpenBluetooth = bluetoothState !== "unsupported";
 
   return (
     <section className="sticky top-0 z-30 -mx-3 border-y border-moonwalk-navy bg-moonwalk-white text-moonwalk-navy shadow-[0_1px_0_rgba(11,16,31,0.18)] dark:border-moonwalk-white dark:bg-moonwalk-navy dark:text-moonwalk-white md:mx-0 md:border-x">
@@ -134,7 +143,7 @@ export function StickyDeviceBar({
           onClick={
             isBluetoothConnected ? onBluetoothDisconnect : onBluetoothConnect
           }
-          disabled={!canUseBluetooth || isBluetoothPending}
+          disabled={!canOpenBluetooth || isBluetoothPending}
         >
           {isBluetoothPending ? (
             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
