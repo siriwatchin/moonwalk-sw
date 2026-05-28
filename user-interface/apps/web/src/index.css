@@ -1,0 +1,61 @@
+@import "@user-interface/ui/globals.css";
+
+@font-face {
+  font-family: "LINE Seed Sans TH";
+  src: url("/fonts/LINESeedSansTH_Rg.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+.font-line-seed-th {
+  font-family: "LINE Seed Sans TH", Tahoma, sans-serif;
+}
+
+body {
+  font-size: 13px;
+}
+
+@theme inline {
+  --color-moonwalk-navy: #0b101f;
+  --color-moonwalk-slate: #3A3E41;
+  --color-moonwalk-teal: #41c3c0;
+  --color-moonwalk-silver: #D4D9DD;
+  --color-moonwalk-white: #FFFFFF;
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: #0b101f;
+  --card: #FFFFFF;
+  --card-foreground: #0b101f;
+  --primary: #0b101f;
+  --primary-foreground: #FFFFFF;
+  --secondary: #D4D9DD;
+  --secondary-foreground: #0b101f;
+  --muted: #D4D9DD;
+  --muted-foreground: #3A3E41;
+  --accent: #41c3c0;
+  --accent-foreground: #0b101f;
+  --border: #D4D9DD;
+  --input: #D4D9DD;
+  --ring: #41c3c0;
+}
+
+.dark {
+  --background: #0b101f;
+  --foreground: #FFFFFF;
+  --card: #0b101f;
+  --card-foreground: #FFFFFF;
+  --primary: #FFFFFF;
+  --primary-foreground: #0b101f;
+  --secondary: #3A3E41;
+  --secondary-foreground: #FFFFFF;
+  --muted: #3A3E41;
+  --muted-foreground: #D4D9DD;
+  --accent: #41c3c0;
+  --accent-foreground: #0b101f;
+  --border: #3A3E41;
+  --input: #3A3E41;
+  --ring: #41c3c0;
+}

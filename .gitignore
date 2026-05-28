@@ -24,3 +24,6 @@ yarn-error.log*
 # Build / archive artifacts
 hardware.zip
 *.md
+.env
+.netlify/
+.claude/
