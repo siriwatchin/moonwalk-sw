@@ -7,7 +7,9 @@
 > "how to get there from the CSV" layer.
 >
 > **Status legend:** ✅ computable from this data now · ⚙️ needs a setup constant (not in the CSV) ·
-> ⛔ blocked on this capture (no per-step walking load).
+> 🟡 **pipeline built & demonstrated** (on real squeeze-test load + a synthetic walk) but needs a real
+> **loading-walk** capture for gait-valid numbers — see [`ml_pipeline/wsfc_loading_metrics.py`](../ml_pipeline/wsfc_loading_metrics.py)
+> and [`ml_pipeline/mock_baseline_walk.py`](../ml_pipeline/mock_baseline_walk.py).
 
 ---
 
@@ -145,24 +147,61 @@ Quick aggregate read: duty ≈ **25%** if planted = phase 1 only, ≈ **63%** if
   `CV` computed **per side** (not mixed!), `consistency = 1 − mean(CV_perside)`.
   `score = 100·(0.6·SR + 0.4·consistency)`.
 
-### 5. Handle Load (relative) ⛔ (transducer works; no walking load here)
+> **Metrics 5–8 are built and run today** via [`wsfc_loading_metrics.py`](../ml_pipeline/wsfc_loading_metrics.py)
+> — demonstrated on the **8 real squeeze-test load events** *and* on the **120-step synthetic walk**
+> ([`mock_baseline_walk.py`](../ml_pipeline/mock_baseline_walk.py)). What's still missing is a **real
+> per-step walking load** capture; until then the *numbers* are demo/synthetic, not gait-valid. 🟡
+
+### 5. Handle Load (relative) 🟡 (transducer + conversion proven; awaiting walking load)
 - **Columns:** `A.pressure_pa` (cleaned `P`), swing-axis `w` for the IMU tare gate.
 - **Tare:** `P_tare = 101325 Pa` (IMU swing-phase value == distribution mode, agree to 0.2 Pa).
 - **Formula:** `dP = max(0, P − P_tare)` (smooth ~100 ms median) · `load% = 100·dP / baseline_dP`.
   *No `a,b,c` calibration exists → absolute kgf is out of scope; relative% is the deliverable.*
-- **Status:** runs end-to-end and is clean on the **11 squeeze-test events** (peaks 0.3–14.6 kPa), but **`dP ≈ 0` during walking** — no per-step load in this capture.
+- **Status:** runs end-to-end and is clean on the **8 squeeze-test events** (peaks ~1.2–14.6 kPa, `load%` 15–133%), but **`dP ≈ 0` during walking** — no per-step gait load in this capture.
 
-### 6. Baseline lean ⛔⚙️
+### 6. Baseline lean 🟡⚙️
 - **Columns:** per-step peak `dP` over a **setup walk**.
-- **How:** `baseline_dP = percentile(per_step_peak_dP, ~90%)`. *(In this data only 11 squeeze peaks exist → placeholder `7257 Pa`, not a gait baseline.)*
+- **How:** `baseline_dP = percentile(per_step_peak_dP, ~90%)`. *(Real data: 8 squeeze peaks → `baseline_dP ≈ 7730 Pa`, not a gait baseline. Synthetic walk: `9177 Pa` naive / `8444 Pa` robust — see [`mock_baseline_walk.py`](../ml_pipeline/mock_baseline_walk.py); per [ADR-0012] #1 the gait baseline should be a **learned/robust** estimate, not a raw percentile.)*
 
-### 7. Weight Support Target Compliance ⛔
+### 7. Weight Support Target Compliance 🟡
 - **Columns:** per-step peak `load%`, `t_plant[]` (to sample once per step at peak).
-- **Formula:** `in_band_% = 100·#(peak_load% ≤ target)/total` · target faded −10%/wk (60→30% of baseline) · advance when `in_band_% ≥ 80`.
+- **Formula:** `in_band_% = 100·#(peak_load% ≤ target)/total` · target faded −10%/wk (60→30% of baseline) · advance when `in_band_% ≥ 80`. Rule-based by mandate ([ADR-0011]/[ADR-0012] — **no ML in the cue/compliance**).
+- **Status:** runs on the synthetic walk (wk1 60%→18% in-band → HOLD, as expected for a *pre-training* baseline walk); needs a real loading walk + clinician target.
 
-### 8. Session Weight-Support Training Load ⛔
+### 8. Session Weight-Support Training Load 🟡
 - **Columns:** per-step `load%` (+ steps/duration from IMU).
-- **Formula:** `raw = Σ_steps lean_reduction·in_band_factor` (`lean_reduction = max(0,1−load%/100)`, `in_band_factor = 1 if peak≤target else 0`) · `score = 100·log(1+raw)/log(1+raw_max)`.
+- **Formula:** `raw = Σ_steps lean_reduction·in_band_factor` (`lean_reduction = max(0,1−load%/100)`, `in_band_factor = 1 if peak≤target else 0`) · `score = 100·log(1+raw)/log(1+raw_max)`. Rule-based aggregate.
+- **Status:** runs on the synthetic walk (raw 12.09 → **score 53.6/100**); gait-valid once a real loading walk exists.
+
+### How we make 5–8 (runnable pipeline)
+
+The loading half is implemented end-to-end in [`ml_pipeline/`](../ml_pipeline). Two entry points:
+
+**A) On the real squeeze-test load** (device-A pressure in the export):
+```bash
+python ml_pipeline/wsfc_loading_metrics.py data/exports/arduino_wide.csv
+```
+Inside, `load_and_clean()` → `detect_events()` → `compute_metrics()` → `print_report()`:
+1. **Clean** — drop `A.pressure_pa == 0` (15%) and `< 90000 Pa` startup outliers.
+2. **Tare** — `P_tare ≈ 101325 Pa` (mode of cleaned signal == IMU swing-phase value).
+3. **dP** — `dP = max(0, P − P_tare)`, smoothed with a ~100 ms rolling median.
+4. **Per-load peaks** — `detect_events()` groups loading bursts → one peak `dP` per event.
+5. **#6** `baseline_dP = p90(peaks)` → **#5** `load% = 100·dP / baseline_dP`.
+6. **#7** count `peak ≤ target` over the faded 60→30% schedule (advance ≥80%) → **#8**
+   `raw = Σ lean_reduction·in_band_factor`, `score = 100·log(1+raw)/log(1+raw_max)`.
+
+**B) On a synthetic gait-shaped walk** (per-step peaks given directly — no event detection):
+```bash
+python ml_pipeline/mock_baseline_walk.py          # writes data/mock/synthetic_setup_walk.csv + prints #6
+```
+then feed those 120 per-step peaks straight into `compute_metrics()` (each CSV row is already a
+per-step peak `dP`, so `detect_events()` is bypassed). This is how the 120-step #5–#8 numbers above
+were produced.
+
+**To make it gait-valid (one swap):** replace the body of `detect_events()` with a **stance-gated
+per-step peak sampler** driven by IMU plant detection (Stage 2 above) — sample `dP` at each plant's
+load peak. `compute_metrics()`, the baseline/target/compliance/STL math, and the report are unchanged;
+only the *event source* moves from squeeze bursts (A) / synthetic rows (B) to real gait steps.
 
 ---
 
@@ -175,14 +214,16 @@ Quick aggregate read: duty ≈ **25%** if planted = phase 1 only, ≈ **63%** if
 | 2 | Stick Duty Factor | gyro_mag, acc_mag | ✅ | — |
 | 3 | Stride / Velocity | swing-axis gyro, `_time` | ✅⚙️ | `L` for absolute |
 | 4 | **Symmetry & Rhythm (limp)** | plant times | ✅⚙️ | side-label (for naming only) |
-| 5 | Handle Load (relative) | `A.pressure_pa` | ⛔ | no walking load in capture |
-| 6 | Baseline lean | per-step peak `dP` | ⛔⚙️ | loading walk |
-| 7 | WS Target Compliance | per-step `load%` | ⛔ | loading walk + target |
-| 8 | Session Training Load | per-step `load%` | ⛔ | loading walk + target |
+| 5 | Handle Load (relative) | `A.pressure_pa` | 🟡 | built; proven on squeeze tests; needs walking load |
+| 6 | Baseline lean | per-step peak `dP` | 🟡⚙️ | built; demoed on synthetic walk; needs loading walk |
+| 7 | WS Target Compliance | per-step `load%` | 🟡 | built; runs on synthetic walk; needs loading walk + target |
+| 8 | Session Training Load | per-step `load%` | 🟡 | built; runs on synthetic walk; needs loading walk + target |
 
 **Bottom line:** metrics **0–4 (the limp meter + full temporal/trend stack) are computable on this data
-today**; metrics **5–8 (the WSFC loading half) need a capture where the patient actually leans on the
-cane each step** — the bladder→pressure→`load%` conversion itself is built and proven on squeeze tests.
+today**. Metrics **5–8 (the WSFC loading half) are built and run end-to-end** — proven on the real
+squeeze-test load and on a synthetic walk (`ml_pipeline/`) — but their *numbers* only become **gait-valid**
+once a capture exists where the patient **actually leans on the cane each step**. The blocker is the
+missing loading-walk **data**, not the pipeline (which is done) or the algorithm.
 
 ---
 
