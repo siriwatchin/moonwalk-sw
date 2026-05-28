@@ -18,6 +18,7 @@ export type BiofeedbackMetricsConfig = {
 };
 
 export type BiofeedbackAction =
+  | "Idle"
   | "เริ่มเก็บข้อมูล"
   | "กำลังเดิน"
   | "เดินต่อเนื่อง"
@@ -40,6 +41,8 @@ export type BiofeedbackMetrics = {
   consistency: number | null;
   pressureDeltaPa: number;
   loadPercent: number;
+  targetCompliancePercent: number | null;
+  sessionWeightSupportTrainingLoad: number | null;
   loadControlPercent: number;
   loadControlLabel: "เบาเกินไป" | "อยู่ในเป้าหมาย" | "กดมากไป";
   activationScore: number;
@@ -52,6 +55,9 @@ export type BiofeedbackMetrics = {
   recommendation: string;
   action: BiofeedbackAction;
   confidence: number;
+  overallQualityPercent: number;
+  overallQualityLabel: "แย่" | "ปานกลาง" | "ดีเยี่ยม";
+  isIdle: boolean;
 };
 
 export type BiofeedbackBaseline = {
@@ -78,6 +84,7 @@ export type BiofeedbackSessionSummary = {
   dutyFactorPercent: number | null;
   cadenceSpm: number | null;
   loadInTargetPercent: number;
+  sessionWeightSupportTrainingLoad: number | null;
   fatigueSlope: number | null;
   dominantAction: BiofeedbackAction;
 };
@@ -232,6 +239,38 @@ function detectPlants(
   return plants;
 }
 
+function detectSwingPeakPlants(
+  samples: PreparedSample[],
+  swingAxis: Axis,
+  refractoryMs: number,
+) {
+  const plants: number[] = [];
+  const swingValues = samples.map((sample) => Math.abs(sample.gyro[swingAxis]));
+  const peakThreshold = Math.max(18, median(swingValues) + standardDeviation(swingValues) * 0.45);
+  let lastPlantMs = Number.NEGATIVE_INFINITY;
+
+  for (let index = 1; index < samples.length - 1; index += 1) {
+    const previous = swingValues[index - 1] ?? 0;
+    const current = swingValues[index] ?? 0;
+    const next = swingValues[index + 1] ?? 0;
+    const sample = samples[index];
+
+    if (!sample) {
+      continue;
+    }
+
+    const isPeak = current >= previous && current > next && current >= peakThreshold;
+    const enoughGap = sample.timestamp_ms - lastPlantMs >= refractoryMs;
+
+    if (isPeak && enoughGap) {
+      plants.push(sample.timestamp_ms);
+      lastPlantMs = sample.timestamp_ms;
+    }
+  }
+
+  return plants;
+}
+
 function calculateDutyFactor(
   samples: PreparedSample[],
   plants: number[],
@@ -306,6 +345,10 @@ function calculateRhythmScore(cycleTimesMs: number[]) {
 function getAction(
   metrics: Omit<BiofeedbackMetrics, "action" | "recommendation">,
 ): BiofeedbackAction {
+  if (metrics.isIdle) {
+    return "Idle";
+  }
+
   if (metrics.sampleCount < 20 || metrics.plants.length < 2) {
     return "เริ่มเก็บข้อมูล";
   }
@@ -393,6 +436,94 @@ function calculatePressureDeltaPa(
     .slice(-3);
 
   return median(cleanedDeltas);
+}
+
+function detectIdle(samples: PreparedSample[], pressureDeltaPa: number) {
+  const recentSamples = samples.slice(-40);
+
+  if (recentSamples.length < 20) {
+    return true;
+  }
+
+  const recentGyroMean = mean(
+    recentSamples.map((sample) => sample.gyroMagnitudeDps),
+  );
+  const recentAccelDeviation = mean(
+    recentSamples.map((sample) => Math.abs(sample.accelMagnitudeG - 1)),
+  );
+  const hasMotion = recentGyroMean >= 8 || recentAccelDeviation >= 0.035;
+  const hasGripLoad = pressureDeltaPa >= 150;
+
+  return !hasMotion && !hasGripLoad;
+}
+
+function pressureToDelta(pressure: number, pressureTarePa: number) {
+  if (!Number.isFinite(pressure) || pressure <= 0 || pressure < 90_000) {
+    return null;
+  }
+
+  return Math.max(0, pressure - pressureTarePa);
+}
+
+function calculateWeightSupportTrainingLoad({
+  baselinePressureDeltaPa,
+  plants,
+  pressureTarePa,
+  samples,
+  targetLoadPercent,
+}: {
+  baselinePressureDeltaPa: number;
+  plants: number[];
+  pressureTarePa: number;
+  samples: PreparedSample[];
+  targetLoadPercent: number;
+}) {
+  const peakLoadPercents: number[] = [];
+
+  for (let cycleIndex = 1; cycleIndex < plants.length; cycleIndex += 1) {
+    const startMs = plants[cycleIndex - 1] ?? 0;
+    const endMs = plants[cycleIndex] ?? 0;
+    const cycleDeltas = samples
+      .filter((sample) => sample.timestamp_ms >= startMs && sample.timestamp_ms < endMs)
+      .map((sample) => pressureToDelta(sample.pressure, pressureTarePa))
+      .filter((delta): delta is number => delta !== null);
+
+    if (cycleDeltas.length === 0 || baselinePressureDeltaPa <= 0) {
+      continue;
+    }
+
+    peakLoadPercents.push(clamp((Math.max(...cycleDeltas) / baselinePressureDeltaPa) * 100, 0, 200));
+  }
+
+  if (peakLoadPercents.length === 0) {
+    return {
+      sessionWeightSupportTrainingLoad: null,
+      targetCompliancePercent: null,
+    } satisfies Pick<
+      BiofeedbackMetrics,
+      "sessionWeightSupportTrainingLoad" | "targetCompliancePercent"
+    >;
+  }
+
+  const inBandCount = peakLoadPercents.filter((peak) => peak <= targetLoadPercent).length;
+  const targetCompliancePercent = (inBandCount / peakLoadPercents.length) * 100;
+  const raw = peakLoadPercents.reduce((total, peak) => {
+    const leanReduction = Math.max(0, 1 - peak / 100);
+    const inBandFactor = peak <= targetLoadPercent ? 1 : 0;
+
+    return total + leanReduction * inBandFactor;
+  }, 0);
+  const rawMax = peakLoadPercents.length;
+  const sessionWeightSupportTrainingLoad =
+    rawMax > 0 ? clamp((100 * Math.log1p(raw)) / Math.log1p(rawMax), 0, 100) : null;
+
+  return {
+    sessionWeightSupportTrainingLoad,
+    targetCompliancePercent,
+  } satisfies Pick<
+    BiofeedbackMetrics,
+    "sessionWeightSupportTrainingLoad" | "targetCompliancePercent"
+  >;
 }
 
 function calculateGaitReadiness({
@@ -511,6 +642,10 @@ function calculateFatigueSlope(
 }
 
 function getRecommendation(metrics: Omit<BiofeedbackMetrics, "recommendation">) {
+  if (metrics.isIdle) {
+    return "Idle";
+  }
+
   if (metrics.confidence < 0.45) {
     return "กำลังเก็บข้อมูล เดินต่ออีกเล็กน้อย";
   }
@@ -534,6 +669,38 @@ function getRecommendation(metrics: Omit<BiofeedbackMetrics, "recommendation">) 
   return "คงจังหวะนี้ไว้";
 }
 
+function calculateOverallQuality({
+  dutyFactorPercent,
+  rhythmScore,
+  sessionWeightSupportTrainingLoad,
+}: {
+  dutyFactorPercent: number | null;
+  rhythmScore: number | null;
+  sessionWeightSupportTrainingLoad: number | null;
+}) {
+  const componentScores = [
+    rhythmScore,
+    dutyFactorPercent,
+    sessionWeightSupportTrainingLoad,
+  ].filter((value): value is number => value !== null);
+  const overallQualityPercent =
+    componentScores.length > 0 ? clamp(mean(componentScores), 0, 100) : 0;
+  const overallQualityLabel =
+    overallQualityPercent < 34
+      ? "แย่"
+      : overallQualityPercent < 67
+        ? "ปานกลาง"
+        : "ดีเยี่ยม";
+
+  return {
+    overallQualityLabel,
+    overallQualityPercent,
+  } satisfies Pick<
+    BiofeedbackMetrics,
+    "overallQualityLabel" | "overallQualityPercent"
+  >;
+}
+
 export function calculateBiofeedbackMetrics(
   samples: NanoImuSample[],
   config: BiofeedbackMetricsConfig = {},
@@ -550,7 +717,12 @@ export function calculateBiofeedbackMetrics(
     DEFAULT_BASELINE_PRESSURE_DELTA_PA;
   const targetLoadPercent = config.targetLoadPercent ?? 60;
   const swingAxis = selectSwingAxis(preparedSamples);
-  const plants = detectPlants(preparedSamples, swingAxis, plantGyroDps, refractoryMs);
+  const strictPlants = detectPlants(preparedSamples, swingAxis, plantGyroDps, refractoryMs);
+  const swingPeakPlants =
+    strictPlants.length >= 2
+      ? strictPlants
+      : detectSwingPeakPlants(preparedSamples, swingAxis, refractoryMs);
+  const plants = strictPlants.length >= 2 ? strictPlants : swingPeakPlants;
   const cycleTimesMs = plants
     .slice(1)
     .map((plantMs, index) => plantMs - (plants[index] ?? plantMs))
@@ -565,10 +737,19 @@ export function calculateBiofeedbackMetrics(
   const { consistency, rhythmScore, symmetryRatio } =
     calculateRhythmScore(cycleTimesMs);
   const pressureDeltaPa = calculatePressureDeltaPa(preparedSamples, pressureTarePa);
+  const isIdle = detectIdle(preparedSamples, pressureDeltaPa);
   const loadPercent =
     baselinePressureDeltaPa > 0
       ? clamp((pressureDeltaPa / baselinePressureDeltaPa) * 100, 0, 200)
       : 0;
+  const { sessionWeightSupportTrainingLoad, targetCompliancePercent } =
+    calculateWeightSupportTrainingLoad({
+      baselinePressureDeltaPa,
+      plants,
+      pressureTarePa,
+      samples: preparedSamples,
+      targetLoadPercent,
+    });
   const { loadControlLabel, loadControlPercent } = calculateLoadControl(
     loadPercent,
     targetLoadPercent,
@@ -605,6 +786,11 @@ export function calculateBiofeedbackMetrics(
     loadPercent,
     rhythmScore,
   });
+  const { overallQualityLabel, overallQualityPercent } = calculateOverallQuality({
+    dutyFactorPercent,
+    rhythmScore,
+    sessionWeightSupportTrainingLoad,
+  });
   const confidence = clamp(
     preparedSamples.length / 100 + plants.length / 8 + (rhythmScore === null ? 0 : 0.25),
     0,
@@ -625,6 +811,8 @@ export function calculateBiofeedbackMetrics(
     consistency,
     pressureDeltaPa,
     loadPercent,
+    targetCompliancePercent,
+    sessionWeightSupportTrainingLoad,
     loadControlPercent,
     loadControlLabel,
     activationScore,
@@ -635,6 +823,9 @@ export function calculateBiofeedbackMetrics(
     fatigueSlope,
     fatigueLabel,
     confidence,
+    overallQualityLabel,
+    overallQualityPercent,
+    isIdle,
   };
 
   const action = getAction(metricsWithoutAction);
@@ -681,7 +872,9 @@ export function summarizeBiofeedbackSession({
     symmetryRatio: metrics.symmetryRatio,
     dutyFactorPercent: metrics.dutyFactorPercent,
     cadenceSpm: metrics.cadenceSpm,
-    loadInTargetPercent: metrics.loadControlPercent,
+    loadInTargetPercent:
+      metrics.targetCompliancePercent ?? metrics.loadControlPercent,
+    sessionWeightSupportTrainingLoad: metrics.sessionWeightSupportTrainingLoad,
     fatigueSlope: metrics.fatigueSlope,
     dominantAction: metrics.action,
   };
@@ -702,6 +895,7 @@ export function updateBiofeedbackBaseline(
     return (
       session.mobilityStrain / 7 +
       (100 - session.loadInTargetPercent) / 90 +
+      (100 - (session.sessionWeightSupportTrainingLoad ?? 0)) / 100 +
       (session.fatigueSlope ?? 0)
     );
   });

@@ -20,23 +20,30 @@ export function HomePage({
 }) {
   const deviceLabel =
     devices.find((device) => device.id === selectedDevice)?.label ?? "ไม้เท้า";
-  const readinessValue =
-    metrics.gaitReadiness === null ? "--" : String(Math.round(metrics.gaitReadiness));
-  const strainValue = metrics.mobilityStrain.toFixed(1);
+  const dutyValue =
+    metrics.dutyFactorPercent === null
+      ? "--"
+      : String(Math.round(metrics.dutyFactorPercent));
   const rhythmValue =
     metrics.rhythmScore === null
       ? isBluetoothConnected
         ? "--"
         : "86"
       : String(Math.round(metrics.rhythmScore));
-  const readinessTone =
-    metrics.readinessLabel === "พร้อมเดิน"
-      ? "green"
-      : metrics.readinessLabel === "เดินแบบระวัง"
-        ? "amber"
-        : "neutral";
-  const strainTone =
-    metrics.mobilityStrain < 10 ? "green" : metrics.mobilityStrain < 14 ? "amber" : "neutral";
+  const wsTrainingLoadValue =
+    metrics.sessionWeightSupportTrainingLoad === null
+      ? "--"
+      : String(Math.round(metrics.sessionWeightSupportTrainingLoad));
+  const targetComplianceValue =
+    metrics.targetCompliancePercent === null
+      ? "--"
+      : `${Math.round(metrics.targetCompliancePercent)}%`;
+  const trainingTone =
+    metrics.sessionWeightSupportTrainingLoad === null
+      ? "neutral"
+      : metrics.sessionWeightSupportTrainingLoad >= 55
+        ? "green"
+        : "amber";
 
   return (
     <div className="grid gap-2">
@@ -45,26 +52,33 @@ export function HomePage({
           <div className="min-w-0">
             <p className="text-xs text-moonwalk-silver">Moon Walk</p>
             <h1 className="mt-2 text-[22px] font-bold leading-[0.95] tracking-normal min-[390px]:text-[24px]">
-              สวัสดีคุณ สมชาย
+              สวัสดีคุณ เอ้อ
             </h1>
           </div>
           <div className="grid size-9 shrink-0 place-items-center border border-moonwalk-teal">
             <Check className="size-5" aria-hidden="true" />
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="mt-4 grid grid-cols-3 gap-2">
           <div className="border border-moonwalk-white/30 p-2">
-            <p className="text-xs text-moonwalk-silver">Gait readiness</p>
-            <p className="mt-1 text-lg font-bold">{readinessValue}</p>
+            <p className="text-[10px] text-moonwalk-silver">Rhythm</p>
+            <p className="mt-1 text-lg font-bold">{rhythmValue}</p>
             <p className="mt-1 truncate text-[10px] text-moonwalk-silver">
-              {metrics.readinessLabel}
+              limp meter
             </p>
           </div>
           <div className="border border-moonwalk-white/30 p-2">
-            <p className="text-xs text-moonwalk-silver">Mobility strain</p>
-            <p className="mt-1 text-lg font-bold">{strainValue}</p>
+            <p className="text-[10px] text-moonwalk-silver">Duty</p>
+            <p className="mt-1 text-lg font-bold">{dutyValue}</p>
             <p className="mt-1 truncate text-[10px] text-moonwalk-silver">
-              0-21 session load
+              planted %
+            </p>
+          </div>
+          <div className="border border-moonwalk-white/30 p-2">
+            <p className="text-[10px] text-moonwalk-silver">WS load</p>
+            <p className="mt-1 text-lg font-bold">{wsTrainingLoadValue}</p>
+            <p className="mt-1 truncate text-[10px] text-moonwalk-silver">
+              {targetComplianceValue}
             </p>
           </div>
         </div>
@@ -77,8 +91,11 @@ export function HomePage({
           tone={isBluetoothConnected ? "green" : "neutral"}
         />
         <MiniStatus label="อุปกรณ์" value={deviceLabel} tone="green" />
-        <MiniStatus label="Readiness" value={metrics.readinessLabel} tone={readinessTone} />
-        <MiniStatus label="Strain" value={strainValue} tone={strainTone} />
+        <MiniStatus
+          label="WS training"
+          value={wsTrainingLoadValue}
+          tone={trainingTone}
+        />
       </div>
 
       <GridPanel className="p-0">
@@ -100,15 +117,15 @@ export function HomePage({
           </div>
           <div className="border-r border-moonwalk-silver p-2 dark:border-moonwalk-slate">
             <p className="text-[10px] text-moonwalk-slate/70 dark:text-moonwalk-white/65">
-              Load
+              Duty
             </p>
-            <p className="mt-1 text-base font-bold">{metrics.loadControlLabel}</p>
+            <p className="mt-1 text-base font-bold">{dutyValue}</p>
           </div>
           <div className="p-2">
             <p className="text-[10px] text-moonwalk-slate/70 dark:text-moonwalk-white/65">
-              Fatigue
+              WS load
             </p>
-            <p className="mt-1 text-base font-bold">{metrics.fatigueLabel}</p>
+            <p className="mt-1 text-base font-bold">{wsTrainingLoadValue}</p>
           </div>
         </div>
       </GridPanel>
@@ -147,18 +164,20 @@ export function HomePage({
           <h2 className="text-lg font-bold leading-none">คำแนะนำ</h2>
         </div>
         <div className="mt-2 grid gap-2">
-          {[metrics.recommendation, ...recommendations.slice(0, 2)].map((item) => (
-            <div
-              key={item}
-              className="grid min-h-11 grid-cols-[1fr_auto] items-center gap-2 border border-moonwalk-silver p-2 dark:border-moonwalk-slate"
-            >
-              <p className="text-sm leading-5">{item}</p>
-              <ChevronRight
-                className="size-5 text-moonwalk-slate"
-                aria-hidden="true"
-              />
-            </div>
-          ))}
+          {[metrics.recommendation, ...recommendations.slice(0, 2)].map(
+            (item) => (
+              <div
+                key={item}
+                className="grid min-h-11 grid-cols-[1fr_auto] items-center gap-2 border border-moonwalk-silver p-2 dark:border-moonwalk-slate"
+              >
+                <p className="text-sm leading-5">{item}</p>
+                <ChevronRight
+                  className="size-5 text-moonwalk-slate"
+                  aria-hidden="true"
+                />
+              </div>
+            ),
+          )}
         </div>
       </GridPanel>
     </div>

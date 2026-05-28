@@ -10,14 +10,28 @@ import { StickyDeviceBar } from "@/components/moonwalk/device-bar";
 import { HomePage } from "@/components/moonwalk/home-page";
 import { SettingsPage } from "@/components/moonwalk/settings-page";
 import { SignalsPage } from "@/components/moonwalk/signals-page";
+import { devices, type DeviceId, type PageId } from "@/components/moonwalk-data";
 import { useBluetoothDevice } from "@/hooks/use-bluetooth-device";
 import { useMounted } from "@/hooks/use-mounted";
+import { formatSessionTime } from "@/lib/format";
 import {
   calculateBiofeedbackMetrics,
   type BiofeedbackBaseline,
 } from "@/lib/biofeedback-metrics";
 import type { NanoImuSample } from "@/lib/nano-imu";
-import { devices, type DeviceId, type PageId } from "@/components/moonwalk-data";
+import { Activity } from "lucide-react";
+
+function getQualityTextColor(percent: number) {
+  if (percent < 34) {
+    return "text-red-600 dark:text-red-400";
+  }
+
+  if (percent < 67) {
+    return "text-yellow-600 dark:text-yellow-300";
+  }
+
+  return "text-moonwalk-teal";
+}
 
 export default function MoonWalkApp() {
   const isMounted = useMounted();
@@ -27,6 +41,7 @@ export default function MoonWalkApp() {
   const [isAddDeviceOpen, setIsAddDeviceOpen] = useState(false);
   const [isBluetoothOpen, setIsBluetoothOpen] = useState(false);
   const [sampleHistory, setSampleHistory] = useState<NanoImuSample[]>([]);
+  const [elapsedSeconds, setElapsedSeconds] = useState(522);
   const bluetooth = useBluetoothDevice();
 
   const selectedDeviceLabel = devices.find(
@@ -48,6 +63,14 @@ export default function MoonWalkApp() {
     () => calculateBiofeedbackMetrics(sampleHistory, { baseline }),
     [baseline, sampleHistory],
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setElapsedSeconds((seconds) => seconds + 1);
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const nextSample = bluetooth.latestSample;
@@ -73,7 +96,6 @@ export default function MoonWalkApp() {
         <BiofeedbackPage
           isBluetoothConnected={bluetooth.isConnected}
           metrics={biofeedbackMetrics}
-          selectedDevice={selectedDevice}
         />
       );
     }
@@ -117,6 +139,81 @@ export default function MoonWalkApp() {
     selectedDevice,
   ]);
 
+  const liveWalkingPanel = (
+    <div className="p-2">
+      <div className="grid grid-cols-[1fr_auto] items-start gap-3">
+        <div className="min-w-0">
+          <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
+            Live walking state
+          </p>
+          <h1 className="mt-1 text-xl font-bold leading-none">
+            {bluetooth.isConnected && biofeedbackMetrics.isIdle
+              ? "Idle"
+              : biofeedbackMetrics.activationLabel}
+          </h1>
+        </div>
+        <div className="grid size-9 shrink-0 place-items-center border border-moonwalk-teal text-moonwalk-teal">
+          <Activity className="size-5" aria-hidden="true" />
+        </div>
+      </div>
+      <div className="mt-2 grid grid-cols-3 border border-moonwalk-silver dark:border-moonwalk-slate">
+        <div className="border-r border-moonwalk-silver p-2 dark:border-moonwalk-slate">
+          <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
+            เวลา
+          </p>
+          <p className="mt-1 text-base font-bold leading-none">
+            {formatSessionTime(elapsedSeconds)}
+          </p>
+        </div>
+        <div className="border-r border-moonwalk-silver p-2 dark:border-moonwalk-slate">
+          <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
+            อุปกรณ์
+          </p>
+          <p className="mt-1 truncate text-base font-bold leading-none">
+            {selectedDeviceLabel}
+          </p>
+        </div>
+        <div className="p-2">
+          <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
+            คุณภาพ
+          </p>
+          <div className="mt-1 grid gap-1">
+            <div className="flex items-center justify-between gap-1">
+              <p
+                className={`truncate text-[11px] font-bold leading-none ${getQualityTextColor(
+                  biofeedbackMetrics.overallQualityPercent,
+                )}`}
+              >
+                {biofeedbackMetrics.sampleCount === 0 && bluetooth.isConnected
+                  ? "รอสัญญาณ"
+                  : biofeedbackMetrics.overallQualityLabel}
+              </p>
+              <p className="text-[10px] font-bold leading-none tabular-nums text-moonwalk-slate/70 dark:text-moonwalk-white/65">
+                {Math.round(biofeedbackMetrics.overallQualityPercent)}%
+              </p>
+            </div>
+            <div className="relative h-2 border border-moonwalk-silver dark:border-moonwalk-white/20">
+              <div className="grid h-full grid-cols-3">
+                <span className="bg-red-600" />
+                <span className="bg-yellow-400" />
+                <span className="bg-moonwalk-teal" />
+              </div>
+              <span
+                className="absolute top-[-3px] h-3 w-0.5 bg-moonwalk-white shadow-[0_0_0_1px_#0b101f]"
+                style={{
+                  left: `${Math.max(
+                    0,
+                    Math.min(100, biofeedbackMetrics.overallQualityPercent),
+                  )}%`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   if (!isMounted) {
     return (
       <main className="h-full overflow-y-auto bg-moonwalk-white text-moonwalk-navy dark:bg-moonwalk-navy dark:text-moonwalk-white">
@@ -150,6 +247,7 @@ export default function MoonWalkApp() {
           isBluetoothPending={bluetooth.isPending}
           onBluetoothConnect={() => setIsBluetoothOpen(true)}
           onBluetoothDisconnect={bluetooth.disconnect}
+          stickyBelow={liveWalkingPanel}
         />
 
         {content}

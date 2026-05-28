@@ -16,6 +16,7 @@ import type {
   BluetoothDeviceSnapshot,
 } from "@/hooks/use-bluetooth-device";
 import { cn } from "@user-interface/ui/lib/utils";
+import type { ReactNode } from "react";
 
 function getBluetoothCopy(
   state: BluetoothConnectionState,
@@ -86,6 +87,7 @@ export function StickyDeviceBar({
   isBluetoothPending,
   onBluetoothConnect,
   onBluetoothDisconnect,
+  stickyBelow,
 }: {
   selectedDevice: DeviceId;
   onDeviceChange: (device: DeviceId) => void;
@@ -98,6 +100,7 @@ export function StickyDeviceBar({
   isBluetoothPending: boolean;
   onBluetoothConnect: () => void;
   onBluetoothDisconnect: () => void;
+  stickyBelow?: ReactNode;
 }) {
   const selected =
     devices.find((device) => device.id === selectedDevice) ?? devices[0];
@@ -233,6 +236,12 @@ export function StickyDeviceBar({
               aria-hidden="true"
             />
           </button>
+        </div>
+      ) : null}
+
+      {stickyBelow ? (
+        <div className="border-t border-moonwalk-navy bg-moonwalk-white dark:border-moonwalk-white/25 dark:bg-moonwalk-navy">
+          {stickyBelow}
         </div>
       ) : null}
     </section>
