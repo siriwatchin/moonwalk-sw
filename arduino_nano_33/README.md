@@ -57,6 +57,38 @@ IMU,123456,0.0123,-0.0456,9.8012,0.1200,-0.3100,0.0500,101325.0
 > emitted `acc_norm`/`gyro_norm`/`phase`; that was removed — any feature extraction is now a
 > downstream UNO Q concern.) The wire field list is generated from `protocol/ble_contract.json`.
 
+### Multiple simultaneous clients
+
+The peripheral accepts up to **3 BLE centrals connected at the same time** (Mbed/Cordio's
+`DM_CONN_MAX` default — `ArduinoBLE`'s `ATT_MAX_PEERS`). Every subscribed central receives
+the same CSV notifications in parallel; the firmware doesn't fan out by hand — `BLENotify`
+on the characteristic auto-broadcasts to all subscribers.
+
+What that lets you do:
+
+- Run the UNO Q's `host_bridge/ble_bridge.py` **and** keep nRF Connect open on a phone for
+  visual debugging — without one kicking the other off.
+- Stream into the TCP bridge and the REST bridge at once during bring-up.
+- Run `ble_smoketest.py` from a laptop **while** the live bridge is up to cross-check rate.
+
+Advertising behaviour:
+
+- The Nano keeps advertising as new centrals connect, up to the cap.
+- At 3 connected centrals it **stops advertising** (a 4th scanner won't see `NanoIMU`).
+- A disconnect re-arms advertising automatically.
+
+Serial Monitor shows the transitions:
+
+```
+central connected: AA:BB:CC:DD:EE:FF (2/3)
+central disconnected: AA:BB:CC:DD:EE:FF (1/3)
+at MAX_CENTRALS — advertising paused
+```
+
+> **Throughput note:** 3 centrals share the radio; if any of them negotiates a tiny ATT_MTU
+> (≤ 23) the effective per-client rate may dip below 20 Hz under load. On Linux/BlueZ and
+> modern iOS/Android the MTU is usually 100-247 — no issue.
+
 ### BME680 pressure
 A BME680 is wired on the standard hardware **`Wire`** bus (A4=SDA, A5=SCL); the onboard LSM9DS1
 lives on the internal `Wire1`, so `Wire` is free. The sketch reads it ~1 Hz (non-blocking
@@ -87,6 +119,10 @@ Use **nRF Connect** (iOS/Android) or **LightBlue**:
 - Open the custom service `19B10000-…-768A1214` → characteristic `19B10001-…-768A1214`.
 - Tap **Notify** (subscribe); the value updates ~every 50 ms. The app shows it as
   bytes/hex — decode as UTF-8 to read the CSV line.
+
+> You can keep the phone subscribed while `ble_bridge.py` (or the UNO Q host bridge) runs
+> in parallel — the firmware supports up to 3 simultaneous centrals (see "Multiple
+> simultaneous clients" above).
 
 ### UNO Q gateway — `ble_bridge.py` (primary)
 ```bash

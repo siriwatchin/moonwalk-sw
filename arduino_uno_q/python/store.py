@@ -227,6 +227,28 @@ class SampleStore:
                 "last_seen_at": self._last_recv or None,
             }
 
+    def samples_in_range(self, from_ms: int, to_ms: int) -> list[ImuSample]:
+        """Return samples whose Nano `timestamp_ms` falls in [from_ms, to_ms] (inclusive).
+
+        Keys off the Nano's own millis-since-boot clock (`ImuSample.timestamp_ms`), not the
+        gateway receive clock — so the browser can request "last 30 s" by computing the window
+        end from the newest sample it has seen (which is also Nano time). Returns an empty list
+        if the window is outside the buffer. Bounds are tolerant: a swapped (to, from) pair is
+        normalised to keep the caller honest.
+        """
+        try:
+            from_ms = int(from_ms); to_ms = int(to_ms)
+        except (TypeError, ValueError):
+            return []
+        if from_ms > to_ms:
+            from_ms, to_ms = to_ms, from_ms
+        with self._lock:
+            return [s for s in self._dq if from_ms <= s.timestamp_ms <= to_ms]
+
+    def to_csv_range(self, from_ms: int, to_ms: int) -> str:
+        """The buffer slice within [from_ms, to_ms] as CSV (header-only if empty)."""
+        return to_csv(self.samples_in_range(from_ms, to_ms))
+
     def to_csv(self) -> str:
         with self._lock:
             rows = list(self._dq)

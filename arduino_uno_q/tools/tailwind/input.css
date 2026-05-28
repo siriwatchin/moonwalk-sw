@@ -99,4 +99,19 @@
     color: var(--faint);
     pointer-events: none;
   }
+
+  /* Status dot shared by the source-picker trigger and its menu items. The neutral colour
+     (`muted`) reads as "no source"; `.status-live` is green and `.status-warn` is amber so
+     "source set but offline" stands apart. Colour isn't the only signal — the trigger label
+     and the item icons (🧪 / 📡 / ○) also distinguish state for non-colour users. */
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: var(--faint);
+    flex-shrink: 0;
+  }
+  .status-dot.status-live { background: var(--live); box-shadow: 0 0 0 2px color-mix(in srgb, var(--live) 25%, transparent); }
+  .status-dot.status-warn { background: #d4a72c; }
 }

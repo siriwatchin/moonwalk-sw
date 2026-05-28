@@ -20,48 +20,82 @@
 
   <!-- Vendored Tailwind + daisyUI (offline, no CDN). Rebuild with tools/tailwind/build.sh after
        changing classes here or in app.js. Custom CSS (focus ring, reduced-motion, toast,
-       no-data overlay) lives in tools/tailwind/input.css and is compiled in. -->
+       no-data overlay, status dot) lives in tools/tailwind/input.css and is compiled in. -->
   <link rel="stylesheet" href="tailwind.css" />
 </head>
 <body class="bg-[var(--bg)] text-[var(--text)] font-sans">
-  <!-- daisyUI right drawer: secondary controls (Scan/Reset/Clear/Record/Export) live in the
-       drawer to keep the header focused on the realtime view. Toggle is a CSS-only checkbox —
-       no JavaScript needed for open/close. Esc and clicking the overlay both close it. -->
+  <!-- daisyUI right drawer. The drawer side panel is `lg:hidden` so on desktop the controls live
+       inline in the header; the ☰ button is hidden on lg+ as well. On smaller screens the header
+       collapses to logo + live badge + ☰, and tapping ☰ reveals the full control surface.
+       Controls in both places share `data-action="…"` attributes so a single event delegator in
+       app.js wires them both — no duplicate ids. -->
   <div class="drawer drawer-end">
     <input id="drawer-toggle" type="checkbox" class="drawer-toggle" />
 
     <!-- ===== main page ===== -->
     <div class="drawer-content min-h-screen lg:h-screen lg:overflow-hidden flex flex-col">
-      <!-- Header: PRIMARY controls only (brand · tabs · source · live badge+meta · theme · ☰).
-           Secondary controls moved into the drawer to declutter. -->
-      <header role="banner" class="flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 border-b border-[var(--border)] shrink-0">
-        <h1 class="text-lg font-semibold m-0">🦯 Smart Cane IMU</h1>
+      <!-- Header: logo + tabs + live badge + (desktop-only) inline controls + (mobile-only) ☰. -->
+      <header role="banner" class="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 border-b border-[var(--border)] shrink-0">
+        <!-- Brand (left) -->
+        <h1 class="text-lg font-semibold m-0 shrink-0">🦯 Smart Cane IMU</h1>
 
-        <nav aria-label="Page" class="join">
+        <nav aria-label="Page" class="join shrink-0 hidden sm:inline-flex">
           <span class="join-item btn btn-sm btn-active no-animation" aria-current="page">Realtime</span>
           <span class="join-item btn btn-sm btn-disabled" aria-disabled="true" title="coming soon">Analysis</span>
         </nav>
 
-        <label class="flex items-center gap-1">
-          <span class="text-xs opacity-70">Source</span>
-          <select id="srcSel" aria-label="Active source"
-            class="select select-bordered select-sm text-[13px] min-w-[12rem]"></select>
-        </label>
-
-        <span id="badge" role="status" aria-live="polite" class="badge badge-ghost gap-1">connecting…</span>
-        <span id="meta" class="text-xs opacity-70"></span>
+        <!-- Live badge + meta — visible on every breakpoint (it's the primary state cue). -->
+        <span id="badge" role="status" aria-live="polite" class="badge badge-ghost gap-1 shrink-0">connecting…</span>
+        <span id="meta" class="text-xs opacity-70 hidden md:inline truncate"></span>
 
         <span class="flex-1"></span>
 
-        <button id="btnTheme" aria-label="Toggle light/dark theme" title="Toggle light/dark"
-          class="btn btn-ghost btn-sm text-base">🌙</button>
+        <!-- ===== desktop-only inline controls (lg+) ============================= -->
+        <!-- Source picker: daisyUI dropdown with a card list (rendered by app.js into
+             [data-source-list]). The trigger shows the active source + a status dot. -->
+        <div class="dropdown dropdown-end hidden lg:block" data-source-dropdown>
+          <button tabindex="0" role="button" class="btn btn-sm btn-outline gap-2" data-source-trigger
+            aria-label="Choose source">
+            <span class="status-dot" data-source-dot></span>
+            <span class="font-medium" data-source-label>No source</span>
+            <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <ul tabindex="0" class="dropdown-content z-40 menu bg-base-200 text-base-content shadow-lg rounded-box w-72 p-2 mt-1 max-h-[70vh] overflow-auto"
+            data-source-list role="menu" aria-label="Active source"></ul>
+        </div>
+
+        <!-- Record + Download CSV — same outcome (a CSV), grouped via daisyUI `join`. The Rec
+             button uses btn-outline btn-error so it reads as "ready to record" (red outline)
+             rather than "currently active" (solid primary). When recording it flips to solid
+             btn-error — outline → solid is the visual cue for "armed → rolling". -->
+        <div class="join hidden lg:inline-flex">
+          <button class="join-item btn btn-sm btn-outline btn-error" data-action="record" aria-label="Start recording">⏺ Rec</button>
+          <button class="join-item btn btn-sm btn-outline" data-action="export" aria-label="Download CSV"
+            title="Download CSV (buffer / history / session)">⬇ CSV</button>
+        </div>
+
+        <!-- "More" — secondary actions (Scan / Reset / Clear) tucked behind one button. -->
+        <div class="dropdown dropdown-end hidden lg:block">
+          <button tabindex="0" role="button" class="btn btn-ghost btn-sm" aria-label="More actions" title="More">⋯</button>
+          <ul tabindex="0" class="dropdown-content z-40 menu bg-base-200 text-base-content shadow-lg rounded-box w-56 p-2 mt-1"
+            role="menu" aria-label="More actions">
+            <li><a data-action="scan" tabindex="0">🔍 Scan BLE</a></li>
+            <li><a data-action="reset" tabindex="0">↺ Reset to demo</a></li>
+            <li><a data-action="clear" tabindex="0">🧹 Clear buffer</a></li>
+          </ul>
+        </div>
+
+        <button class="btn btn-ghost btn-sm text-base hidden lg:inline-flex" data-action="theme"
+          aria-label="Toggle light/dark theme" title="Toggle light/dark">🌙</button>
+
+        <!-- ===== mobile-only hamburger (< lg) =================================== -->
         <label for="drawer-toggle" tabindex="0" aria-label="Open controls"
-          class="btn btn-ghost btn-sm text-base">☰</label>
+          class="btn btn-ghost btn-sm text-base lg:hidden">☰</label>
       </header>
 
       <!-- Info + data-quality line. Wellness-framed messages (missing / resumed) render here. -->
       <div class="px-3 sm:px-5 pt-2 shrink-0">
-        <div id="srcHint" role="status" aria-live="polite" class="text-xs opacity-70">Realtime IMU — pick an active source above (mock, or a scanned Nano). Tap <b>☰</b> to scan, record, or export.</div>
+        <div id="srcHint" role="status" aria-live="polite" class="text-xs opacity-70">Realtime IMU — pick an active source above (mock, or a scanned Nano). Tap <b>☰</b> on mobile for the full control surface.</div>
       </div>
 
       <!-- Single realtime panel: 7 channels (accel row · gyro row · pressure full-width row).
@@ -81,8 +115,8 @@
       <div id="toasts" aria-live="assertive" class="toast-stack"></div>
     </div>
 
-    <!-- ===== right drawer side ===== -->
-    <aside class="drawer-side z-50">
+    <!-- ===== right drawer side (mobile only) ===== -->
+    <aside class="drawer-side z-50 lg:hidden">
       <!-- Clicking the overlay closes the drawer (CSS-only via the checkbox). -->
       <label for="drawer-toggle" aria-label="Close controls" class="drawer-overlay"></label>
       <div class="min-h-full w-80 bg-base-200 text-base-content p-5 flex flex-col gap-3">
@@ -91,41 +125,164 @@
           <label for="drawer-toggle" aria-label="Close" class="btn btn-ghost btn-xs">✕</label>
         </div>
 
-        <!-- Source & device: discover/reset/clear the active source. -->
-        <section aria-labelledby="grp-src" class="flex flex-col gap-2">
-          <h3 id="grp-src" class="text-[11px] uppercase tracking-wider opacity-60 m-0">Source &amp; device</h3>
-          <button id="btnScan" class="btn btn-outline btn-sm">Scan BLE</button>
-          <button id="btnReset" class="btn btn-outline btn-warning btn-sm">Reset to demo source</button>
-          <button id="btnClear" class="btn btn-outline btn-error btn-sm">Clear buffer</button>
+        <!-- Source picker — same dropdown component as the desktop header, full-width. -->
+        <section aria-labelledby="grp-src-m" class="flex flex-col gap-2">
+          <h3 id="grp-src-m" class="text-[11px] uppercase tracking-wider opacity-60 m-0">Source</h3>
+          <div class="dropdown w-full" data-source-dropdown>
+            <button tabindex="0" role="button" class="btn btn-sm btn-outline w-full justify-between" data-source-trigger
+              aria-label="Choose source">
+              <span class="flex items-center gap-2">
+                <span class="status-dot" data-source-dot></span>
+                <span class="font-medium" data-source-label>No source</span>
+              </span>
+              <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <ul tabindex="0" class="dropdown-content z-40 menu bg-base-100 text-base-content shadow-lg rounded-box w-full p-2 mt-1 max-h-[60vh] overflow-auto"
+              data-source-list role="menu" aria-label="Active source"></ul>
+          </div>
         </section>
 
         <div class="divider my-0"></div>
 
-        <!-- Capture: start/stop session recording of the active source. -->
-        <section aria-labelledby="grp-cap" class="flex flex-col gap-2">
-          <h3 id="grp-cap" class="text-[11px] uppercase tracking-wider opacity-60 m-0">Capture</h3>
-          <label class="form-control">
-            <span class="sr-only">Recording name</span>
-            <input id="recLabel" type="text" placeholder="recording name"
-              class="input input-bordered input-sm w-full" />
-          </label>
-          <button id="btnRecord" aria-label="Start recording" class="btn btn-primary btn-sm">⏺ Rec</button>
-          <span id="recStatus" role="status" aria-live="polite" class="text-xs opacity-70 min-h-[1rem]"></span>
+        <!-- Capture: same outcome (CSV) — Record + Download grouped together. Tapping Rec
+             opens the dlgRecName modal to set a session name; pressing Stop saves the CSV. -->
+        <section aria-labelledby="grp-cap-m" class="flex flex-col gap-2">
+          <h3 id="grp-cap-m" class="text-[11px] uppercase tracking-wider opacity-60 m-0">Capture</h3>
+          <div class="join">
+            <button class="join-item btn btn-outline btn-error btn-sm flex-1" data-action="record" aria-label="Start recording">⏺ Rec</button>
+            <button class="join-item btn btn-outline btn-sm flex-1" data-action="export" aria-label="Download CSV">⬇ CSV</button>
+          </div>
+          <span data-rec-status role="status" aria-live="polite" class="text-xs opacity-70 min-h-[1rem]"></span>
         </section>
 
         <div class="divider my-0"></div>
 
-        <!-- Export: download the rolling buffer (~30 s). Stopping a recording auto-downloads
-             its CSV separately. -->
-        <section aria-labelledby="grp-exp" class="flex flex-col gap-2">
-          <h3 id="grp-exp" class="text-[11px] uppercase tracking-wider opacity-60 m-0">Export</h3>
-          <button id="btnExport" class="btn btn-outline btn-sm"
-            title="Download the active source's buffer (~30 s) as CSV">⬇ Download CSV</button>
-          <p class="text-[11px] opacity-60 m-0">Stopping a recording above auto-downloads that session as a separate CSV.</p>
+        <!-- Secondary actions: same set as the desktop "More ⋯" menu. -->
+        <section aria-labelledby="grp-more-m" class="flex flex-col gap-2">
+          <h3 id="grp-more-m" class="text-[11px] uppercase tracking-wider opacity-60 m-0">More</h3>
+          <button class="btn btn-outline btn-sm" data-action="scan">🔍 Scan BLE</button>
+          <button class="btn btn-outline btn-warning btn-sm" data-action="reset">↺ Reset to demo</button>
+          <button class="btn btn-outline btn-error btn-sm" data-action="clear">🧹 Clear buffer</button>
+          <div class="divider my-0"></div>
+          <button class="btn btn-ghost btn-sm" data-action="theme">🌙 Toggle theme</button>
         </section>
       </div>
     </aside>
   </div>
+
+  <!-- ===== Download CSV modal (daisyUI <dialog>) ============================= -->
+  <!-- Three ways to a CSV: live buffer slice, cold-path history range, last recording. The
+       form is method="dialog" so Esc / clicking outside / pressing Cancel close cleanly. -->
+  <dialog id="dlgCsv" class="modal">
+    <div class="modal-box max-w-xl">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close">✕</button>
+      </form>
+      <h3 class="text-lg font-bold mb-1">Download CSV</h3>
+      <p class="text-xs opacity-70 mb-3">Choose what to export. Live buffer ≈ last 30 s in memory; History queries the on-device database.</p>
+
+      <form id="frmCsv" class="space-y-4">
+        <!-- ---- live buffer ---- -->
+        <section aria-labelledby="csv-grp-live">
+          <h4 id="csv-grp-live" class="text-[11px] uppercase tracking-wider opacity-60 mb-1">Live buffer</h4>
+          <div class="space-y-1">
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="buffer-all" class="radio radio-sm radio-primary" checked />
+              <span class="label-text text-sm">Whole buffer (~30 s)</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="buffer-10s" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 10 s</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="buffer-30s" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 30 s</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- ---- history (cold path / ts_store) ---- -->
+        <section aria-labelledby="csv-grp-hist">
+          <h4 id="csv-grp-hist" class="text-[11px] uppercase tracking-wider opacity-60 mb-1">History (database)</h4>
+          <div class="space-y-1">
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="hist-5m" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 5 min</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="hist-30m" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 30 min</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="hist-1h" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Last 1 hour</span>
+            </label>
+            <label class="label cursor-pointer justify-start gap-2 py-1">
+              <input type="radio" name="csvRange" value="hist-custom" class="radio radio-sm radio-primary" />
+              <span class="label-text text-sm">Custom range…</span>
+            </label>
+            <div class="ml-7 grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1" data-csv-custom hidden>
+              <label class="form-control">
+                <span class="label-text text-xs opacity-70">From</span>
+                <input type="datetime-local" class="input input-bordered input-sm" data-csv-from />
+              </label>
+              <label class="form-control">
+                <span class="label-text text-xs opacity-70">To</span>
+                <input type="datetime-local" class="input input-bordered input-sm" data-csv-to />
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---- session ---- -->
+        <section aria-labelledby="csv-grp-sess">
+          <h4 id="csv-grp-sess" class="text-[11px] uppercase tracking-wider opacity-60 mb-1">Session</h4>
+          <label class="label cursor-pointer justify-start gap-2 py-1" data-csv-session-wrap>
+            <input type="radio" name="csvRange" value="session" class="radio radio-sm radio-primary" disabled />
+            <span class="label-text text-sm" data-csv-session-text>No recording yet</span>
+          </label>
+        </section>
+
+        <div class="modal-action">
+          <button type="button" class="btn btn-ghost btn-sm" data-csv-cancel>Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" data-csv-download>⬇ Download</button>
+        </div>
+      </form>
+    </div>
+    <!-- Click-outside to close. -->
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
+  <!-- ===== Record-name modal (daisyUI <dialog>) ============================= -->
+  <!-- Pops up when the user taps ⏺ Rec (header or drawer). They pick a session name, then
+       Start (or Enter inside the input) actually begins recording. Stopping is still done by
+       tapping the same button — which is now ⏹ Stop — and the CSV auto-downloads.
+       Mirrors the dlgCsv structure (method="dialog" forms close on Esc / backdrop). -->
+  <dialog id="dlgRecName" class="modal">
+    <div class="modal-box max-w-md">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close">✕</button>
+      </form>
+      <h3 class="text-lg font-bold mb-1">⏺ New recording</h3>
+      <p class="text-xs opacity-70 mb-3">Name this session so you can find the CSV later. Press <b>Stop</b> on the same button to save.</p>
+
+      <form id="frmRecName" class="space-y-3">
+        <label class="form-control">
+          <span class="label-text text-sm">Recording name</span>
+          <input type="text" class="input input-bordered w-full" data-rec-name maxlength="60"
+            autocomplete="off" placeholder="e.g. morning walk" />
+          <span class="label-text-alt text-[11px] opacity-60 mt-1">Spaces and Thai characters are fine — illegal filename characters are stripped.</span>
+        </label>
+
+        <div class="modal-action">
+          <button type="button" class="btn btn-ghost btn-sm" data-rec-cancel>Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm" data-rec-start>⏺ Start recording</button>
+        </div>
+      </form>
+    </div>
+    <!-- Click-outside to close (same as dlgCsv). -->
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
 
   <!-- Vendored Chart.js (offline, no CDN — same policy as tailwind.css). Realtime line charts. -->
   <script src="chart.umd.min.js"></script>

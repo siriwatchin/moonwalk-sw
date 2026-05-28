@@ -27,11 +27,14 @@ from source_manager import ACTIVE   # single internal storage key for the active
 class WebUIServer:
     """Registers the dashboard REST API on the WebUI brick (multi-device)."""
 
-    def __init__(self, registry: DeviceRegistry, manager):
+    def __init__(self, registry: DeviceRegistry, manager, tsstore=None):
         from arduino.app_bricks.web_ui import WebUI  # required — UNO Q / App Lab only
 
         self.reg = registry
         self.mgr = manager
+        # tsstore is optional so existing call sites that don't yet pass it (e.g. tests / old
+        # off-device probes) keep working. /api/export/history will 503 in that case.
+        self.tsstore = tsstore
         self.ui = WebUI()
         self._register_api()
 
@@ -40,7 +43,7 @@ class WebUIServer:
         # FastAPI ships with the WebUI brick (UNO Q only). Lazy import keeps off-device
         # `import webui_server` brick-free. POST bodies MUST be declared with Body(), or
         # FastAPI treats a plain-default param as a *query* param and the JSON body is dropped.
-        from fastapi import Body
+        from fastapi import Body, Query
         from fastapi.responses import Response
 
         # ---- GET: read the one active source's state (no slots) -----------
@@ -65,15 +68,59 @@ class WebUIServer:
             return dev.store.samples_since(since_seq, limit if limit is not None else RECENT_POINTS)
         ui.expose_api("GET", "/api/samples", _samples)
 
-        # Download the active source's rolling buffer (~30 s) as a CSV file. Empty -> header only.
-        def _export():
+        # Download the active source's rolling buffer (~30 s) as a CSV file.
+        # Optional time-range params (from_ms / to_ms over the Nano timestamp_ms axis) let the
+        # CSV modal slice the buffer into "Last 10 s" / "Last 30 s" — same data the live charts
+        # are reading. No params -> whole buffer (backwards compat: `curl /api/export` still works).
+        def _export(from_ms: str | None = None, to_ms: str | None = None):
             dev = reg.get(ACTIVE)
             label = dev.label if dev else "source"
             safe = re.sub(r"[^A-Za-z0-9_-]+", "_", label).strip("_") or "source"
-            fname = f"moonwalk_{safe}_{time.strftime('%Y%m%d-%H%M%S')}.csv"
-            return Response(content=reg.csv(ACTIVE), media_type="text/csv",
+            stem = "buf"
+            if from_ms is not None and to_ms is not None and dev is not None:
+                # Tolerate junk params: any parse failure falls back to whole buffer.
+                try:
+                    a = int(from_ms); b = int(to_ms)
+                    csv_text = dev.store.to_csv_range(a, b)
+                    stem = f"range{max(0, (b - a) // 1000)}s"
+                except (TypeError, ValueError):
+                    csv_text = reg.csv(ACTIVE)
+            else:
+                csv_text = reg.csv(ACTIVE)
+            fname = f"moonwalk_{safe}_{stem}_{time.strftime('%Y%m%d-%H%M%S')}.csv"
+            return Response(content=csv_text, media_type="text/csv",
                             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
         ui.expose_api("GET", "/api/export", _export)
+
+        # Cold-path export from the TimeSeriesStore (InfluxDB) — the only path to data older
+        # than ~30 s. `from`/`to` are ISO8601 strings (the browser sends `Date#toISOString()`,
+        # which is UTC); we pass them through verbatim to the brick. The active source's
+        # device_key drives the metric prefix so other devices don't bleed in (single-active-
+        # source today; this stays correct if multi-device returns later).
+        def _export_history(
+            start: str = Query(default="", alias="from"),
+            end: str = Query(default="", alias="to"),
+        ):
+            # `from` is a Python keyword so we accept it under the alias and bind to `start`.
+            if not start or not end:
+                return Response(content="missing from/to (ISO8601)", status_code=400,
+                                media_type="text/plain")
+            if self.tsstore is None:
+                return Response(content="time-series store not available",
+                                status_code=503, media_type="text/plain")
+            dev = reg.get(ACTIVE)
+            label = dev.label if dev else "history"
+            safe = re.sub(r"[^A-Za-z0-9_-]+", "_", label).strip("_") or "history"
+            try:
+                csv_text = self.tsstore.read_range_csv(start, end, device_key=ACTIVE)
+            except Exception as exc:
+                # Brick errors shouldn't 500 the request — return an empty CSV with a hint header.
+                print(f"[webui] /api/export/history failed: {exc}", flush=True)
+                csv_text = "timestamp_ms,ax,ay,az,gx,gy,gz,pressure\r\n"
+            fname = f"moonwalk_{safe}_history_{time.strftime('%Y%m%d-%H%M%S')}.csv"
+            return Response(content=csv_text, media_type="text/csv",
+                            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+        ui.expose_api("GET", "/api/export/history", _export_history)
 
         # Download the last finished recording (start→stop session) as a CSV file. The browser
         # navigates here right after POST /api/record/stop. Recording state is in /api/status.

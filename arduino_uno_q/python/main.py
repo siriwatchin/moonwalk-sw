@@ -230,9 +230,10 @@ def run_dashboard(empty: bool) -> None:
                        address=STARTUP_SOURCE.get("address"),
                        label=STARTUP_SOURCE.get("label"))
 
-    # WebUI Brick: register the /api/* routes (read + control).
+    # WebUI Brick: register the /api/* routes (read + control). tsstore is passed in so
+    # /api/export/history can serve cold-path range exports (CSV modal in the dashboard).
     from webui_server import WebUIServer
-    _server = WebUIServer(registry, mgr)  # noqa: F841
+    _server = WebUIServer(registry, mgr, tsstore=tsstore)  # noqa: F841
 
     print(f"UNO Q IMU dashboard starting (port={UI_PORT}, "
           f"{'empty' if empty else 'STARTUP_SOURCE'})", flush=True)

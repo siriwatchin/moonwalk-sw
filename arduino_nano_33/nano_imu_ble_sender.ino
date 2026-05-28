@@ -23,8 +23,11 @@
  *   repeated on every payload line. Pressure changes slowly, so this keeps the IMU cadence clean.
  * - UNO Q receives BLE payload and stores/displays data.
  * - Connect-first: the Nano reads the IMU and emits a payload (BLE notify +
- *   Serial echo together) only while a BLE central is connected. Before that it
- *   just advertises and prints a periodic "waiting" heartbeat.
+ *   Serial echo together) only while ≥1 BLE central is connected. Before that
+ *   it just advertises and prints a periodic "waiting" heartbeat.
+ * - Multi-central: accepts up to MAX_CENTRALS simultaneous centrals (Mbed/Cordio
+ *   DM_CONN_MAX default = 3). BLENotify auto-broadcasts to every subscribed
+ *   central, so all of them get the same CSV stream in parallel.
  * --------------------------------------------------------------------------
  */
 
@@ -80,6 +83,43 @@ const unsigned long BME_READ_INTERVAL_MS = 1000;   // pressure changes slowly: r
 // --------------------------------------------------------------------------
 
 unsigned long lastSendMs = 0;
+
+// BLE multi-central state. Mbed/Cordio's ArduinoBLE stack supports up to DM_CONN_MAX
+// simultaneous centrals (default 3); BLENotify auto-broadcasts to every subscribed
+// central, so we only need to count peers + drive advertising. `volatile` is defensive:
+// ArduinoBLE dispatches event handlers from BLE.poll() (cooperative, not ISR), but the
+// keyword is cheap and documents the cross-context access.
+//
+// IMPORTANT — Cordio link-layer quirk: calling BLE.advertise() **from inside** a
+// BLEConnected/BLEDisconnected callback leaves advertising packets going out (so scanners
+// still see NanoIMU), but the link-layer state machine is locked in "connected" context
+// and silently drops incoming connect_req — i.e. a second central can SEE us but never
+// ACKs through. The deferred-flag pattern below moves the advertise() call to loop()
+// main context, which is safe. See: Mbed forum "BLE: Cordio Peripheral - Multiple
+// Central Connections?" + ArduinoBLE issue #108.
+static const int MAX_CENTRALS  = 3;     // mirrors ATT_MAX_PEERS / DM_CONN_MAX
+volatile int     connectedCount = 0;    // updated from BLE event handlers
+volatile bool    advertisingRequested = false;   // set in handlers, consumed in loop()
+unsigned long    lastAdvertiseRearmMs = 0;       // periodic-rearm timer (idempotent kick)
+
+// Settle window after a new BLEConnected fires: pause notify TX so the fresh central's
+// GATT discovery + characteristic subscribe (ATT_READ_BY_GROUP_TYPE / ATT_READ_BY_TYPE /
+// ATT_WRITE) can complete without competing for radio TX slots against the existing
+// connection's notify cadence. Without this, conn 1's notify storm starves conn 2's ATT
+// responses and the new central ATT-times-out while Nano still thinks it's connected.
+volatile unsigned long     pauseUntilMs = 0;                  // 0 = streaming; >0 = paused
+static const unsigned long SETTLE_AFTER_CONNECT_MS = 2000;    // GATT discovery budget
+
+// Whitelist foundation — track each connected central's MAC address per slot so a
+// future whitelist gate in onBLEConnected can decide whether to accept. "" = empty slot.
+// (BLE MAC string format = "AA:BB:CC:DD:EE:FF" = 17 chars + NUL.) Global zero-init.
+char connectedAddresses[MAX_CENTRALS][18];
+
+// Serial-mirror throttle while connected: 80-byte payload at 115200 baud blocks ~7 ms
+// per println — eats ~14% of every 50 ms window. With centrals subscribed we mirror
+// only every Nth sample so BLE.poll() gets more radio-time slots. When 0 centrals are
+// connected we don't enter maybePublish() at all, so the bring-up heartbeat is intact.
+static const unsigned int SERIAL_ECHO_EVERY = 10;   // 50 ms × 10 = ~2 Hz Serial debug
 
 // BME680 state. pressure is optional: if the sensor is absent we keep sending IMU with
 // pressure = 0 so the downstream CSV contract stays well-formed.
@@ -180,38 +220,103 @@ void updatePressure() {
 }
 
 // --------------------------------------------------------------------------
-// BLE connection status
+// Connected-central registry helpers (whitelist foundation)
 // --------------------------------------------------------------------------
 
-// Poll BLE; log connect/disconnect transitions + a periodic "waiting" heartbeat;
-// re-arm advertising after a disconnect. Returns the current connection state.
-bool updateConnection() {
-  static bool wasConnected = false;
-  static unsigned long lastWaitingLogMs = 0;
-
-  BLEDevice central = BLE.central();
-  bool connected = central && central.connected();
-
-  if (connected && !wasConnected) {
-    Serial.print("central connected: ");
-    Serial.println(central.address());
-  } else if (!connected && wasConnected) {
-    Serial.println("central disconnected; advertising again");
-    BLE.advertise();                 // re-arm advertising (some ArduinoBLE versions stop after disconnect)
-  } else if (!connected) {
-    unsigned long now = millis();    // heartbeat so a bare Serial Monitor shows we're alive + waiting
-    if (now - lastWaitingLogMs >= 2000) {
-      lastWaitingLogMs = now;
-      Serial.println("waiting for a BLE central (UNO Q) to connect...");
-    }
+// Linear scans over MAX_CENTRALS = 3 — O(N) is fine; keeps the data structure flat.
+int findSlotByAddress(const char* addr) {
+  for (int i = 0; i < MAX_CENTRALS; i++) {
+    if (strncmp(connectedAddresses[i], addr, 18) == 0) return i;
   }
+  return -1;
+}
 
-  wasConnected = connected;
-  return connected;
+int findFreeSlot() {
+  for (int i = 0; i < MAX_CENTRALS; i++) {
+    if (connectedAddresses[i][0] == 0) return i;
+  }
+  return -1;
 }
 
 // --------------------------------------------------------------------------
-// Publish payload every 50 ms (called only while a central is connected)
+// BLE event handlers (driven by BLE.poll() in loop())
+// --------------------------------------------------------------------------
+//
+// Multi-central model: ArduinoBLE on Mbed/Cordio accepts up to MAX_CENTRALS
+// simultaneous centrals (default DM_CONN_MAX = 3). BLENotify on imuChar
+// auto-broadcasts to every subscribed central, so the publish path is
+// unchanged — these handlers just count peers and keep advertising alive so
+// the next central can still discover us while existing ones stream.
+
+// New central just paired. Bump the counter, log the transition, and request a
+// deferred re-arm of advertising (loop() will call BLE.advertise() in main context —
+// see Cordio quirk note in the state block). At the cap we leave advertising paused:
+// a 4th scanner will not see NanoIMU until someone disconnects.
+void onBLEConnected(BLEDevice central) {
+  connectedCount++;
+
+  // Record the address into a free slot — feeds the periodic active-list log and
+  // gives the future whitelist gate something concrete to check against.
+  String addr = central.address();
+  int slot = findFreeSlot();
+  if (slot >= 0) {
+    strncpy(connectedAddresses[slot], addr.c_str(), 17);
+    connectedAddresses[slot][17] = 0;
+  }
+
+  // TODO(whitelist): once a whitelist is defined, gate by address here, e.g.
+  //   static const char* ALLOWED[] = { "AA:BB:CC:DD:EE:FF", ... };
+  //   if (!inArray(ALLOWED, addr.c_str())) { central.disconnect(); return; }
+  // For now any address is accepted — see `connectedAddresses[]` for the live list.
+
+  Serial.print("central connected: ");
+  Serial.print(addr);
+  Serial.print(" (");
+  Serial.print(connectedCount);
+  Serial.print("/");
+  Serial.print(MAX_CENTRALS);
+  Serial.println(")");
+
+  // Pause notify TX so the new central's GATT discovery + subscribe can land without
+  // competing for radio TX slots against the existing connections' notify cadence.
+  pauseUntilMs = millis() + SETTLE_AFTER_CONNECT_MS;
+  Serial.print("[ble] notify TX paused for ");
+  Serial.print(SETTLE_AFTER_CONNECT_MS);
+  Serial.println(" ms — letting new central finish GATT discovery");
+
+  if (connectedCount < MAX_CENTRALS) {
+    advertisingRequested = true;     // deferred; loop() does the real BLE.advertise()
+  } else {
+    Serial.println("at MAX_CENTRALS — advertising paused");
+  }
+}
+
+// Central dropped (clean disconnect or supervision timeout). Decrement, log,
+// and request a deferred re-arm (covers below-cap and was-at-cap).
+void onBLEDisconnected(BLEDevice central) {
+  if (connectedCount > 0) {
+    connectedCount--;
+  }
+  String addr = central.address();
+  int slot = findSlotByAddress(addr.c_str());
+  if (slot >= 0) {
+    connectedAddresses[slot][0] = 0;     // free the slot
+  }
+
+  Serial.print("central disconnected: ");
+  Serial.print(addr);
+  Serial.print(" (");
+  Serial.print(connectedCount);
+  Serial.print("/");
+  Serial.print(MAX_CENTRALS);
+  Serial.println(")");
+
+  advertisingRequested = true;       // deferred; loop() does the real BLE.advertise()
+}
+
+// --------------------------------------------------------------------------
+// Publish payload every 50 ms (called while ≥1 central is subscribed;
+// BLENotify auto-broadcasts the value to every subscribed central).
 // --------------------------------------------------------------------------
 
 void maybePublish(
@@ -222,6 +327,13 @@ void maybePublish(
   unsigned long now = millis();
 
   if (now - lastSendMs < SEND_INTERVAL_MS) {
+    return;
+  }
+
+  // Settle window — see `pauseUntilMs` note in the state block: skip notify TX while a
+  // freshly connected central is doing GATT discovery, otherwise its ATT responses
+  // get starved by this loop's notify cadence and the central times out.
+  if (now < pauseUntilMs) {
     return;
   }
 
@@ -243,8 +355,14 @@ void maybePublish(
     pressurePa
   );
 
-  imuChar.writeValue(payload);   // BLE notify to the connected central
-  Serial.println(payload);       // mirror to Serial for debug
+  imuChar.writeValue(payload);   // BLE notify — broadcasts to every subscribed central
+
+  // Throttled Serial mirror — see SERIAL_ECHO_EVERY note in the state block.
+  static unsigned int echoCounter = 0;
+  if (++echoCounter >= SERIAL_ECHO_EVERY) {
+    echoCounter = 0;
+    Serial.println(payload);
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -357,6 +475,10 @@ void setup() {
   imuService.addCharacteristic(imuChar);
   BLE.addService(imuService);
 
+  // Multi-central event-driven model — see onBLEConnected / onBLEDisconnected above.
+  BLE.setEventHandler(BLEConnected,    onBLEConnected);
+  BLE.setEventHandler(BLEDisconnected, onBLEDisconnected);
+
   // Initial value
   imuChar.writeValue("IMU,0,0,0,0,0,0,0,0");
 
@@ -378,15 +500,79 @@ void setup() {
 // --------------------------------------------------------------------------
 
 void loop() {
-  bool connected = updateConnection();
+  BLE.poll();                              // drives onBLEConnected / onBLEDisconnected
+
+  // Deferred advertise — event handlers set advertisingRequested; we call BLE.advertise()
+  // here from main context so Cordio can fully re-enter the advertising state machine and
+  // accept new connect_req (the in-callback call doesn't — see state block note).
+  if (advertisingRequested) {
+    advertisingRequested = false;
+    int rc = BLE.advertise();
+    lastAdvertiseRearmMs = millis();
+    Serial.print("[ble] advertise() rearm rc=");
+    Serial.print(rc);
+    Serial.print(" connectedCount=");
+    Serial.println(connectedCount);
+  }
+
+  // Periodic idempotent re-arm while below cap — Cordio sometimes silently exits
+  // advertising after a heavy notify burst on conn 1; this kick keeps us discoverable
+  // without a connect/disconnect event needing to fire.
+  if (connectedCount < MAX_CENTRALS &&
+      millis() - lastAdvertiseRearmMs > 2000) {
+    BLE.advertise();                       // no-op if already advertising
+    lastAdvertiseRearmMs = millis();
+  }
 
   // Service the BME680 every loop (non-blocking; refreshes lastPressurePa ~1 Hz). This runs
   // BEFORE the connect-gate so the sensor is exercised + the [bme] heartbeat appears in Serial
   // from boot — without waiting for a BLE central to pair (key for bring-up debugging).
   updatePressure();
 
-  // Connect-first for the BLE payload: only emit IMU/pressure CSV while a central is connected.
-  if (!connected) {
+  // One-shot "resumed" log when the settle window expires — easier to read than inferring
+  // resume from the payload mirror reappearing 2 s after a connect.
+  {
+    static unsigned long pauseExpiredAt = 0;
+    if (pauseUntilMs > 0 && millis() >= pauseUntilMs && pauseExpiredAt != pauseUntilMs) {
+      pauseExpiredAt = pauseUntilMs;
+      Serial.println("[ble] notify TX resumed");
+    }
+  }
+
+  // While connected: periodic state log so a Serial Monitor watcher can confirm the
+  // advertising machine is still up + see the live active-central list. The payload
+  // mirror is throttled to 2 Hz so this debug line doesn't get buried.
+  if (connectedCount > 0) {
+    static unsigned long lastStateLogMs = 0;
+    unsigned long now = millis();
+    if (now - lastStateLogMs >= 5000) {
+      lastStateLogMs = now;
+      Serial.print("[ble] active=[");
+      bool first = true;
+      for (int i = 0; i < MAX_CENTRALS; i++) {
+        if (connectedAddresses[i][0] != 0) {
+          if (!first) Serial.print(",");
+          Serial.print(connectedAddresses[i]);
+          first = false;
+        }
+      }
+      Serial.print("] count=");
+      Serial.print(connectedCount);
+      Serial.print(" advertising=");
+      Serial.println(connectedCount < MAX_CENTRALS ? "on" : "paused");
+    }
+  }
+
+  // Connect-first for the BLE payload: only emit IMU/pressure CSV while ≥1 central is
+  // subscribed. imuChar.writeValue() auto-broadcasts to every subscribed central, so the
+  // publish path doesn't loop by hand.
+  if (connectedCount == 0) {
+    static unsigned long lastWaitingLogMs = 0;
+    unsigned long now = millis();
+    if (now - lastWaitingLogMs >= 2000) {
+      lastWaitingLogMs = now;
+      Serial.println("waiting for a BLE central to connect...");
+    }
     return;
   }
 
@@ -398,6 +584,6 @@ void loop() {
 
   Vec3 accMs2 = vscale(acc, GRAVITY);     // g -> m/s^2 (gyro stays deg/s)
 
-  // One payload at most every 50 ms: BLE notify + Serial echo together.
+  // One payload at most every 50 ms: BLE notify (broadcast) + Serial echo together.
   maybePublish(accMs2, gyro, lastPressurePa);
 }
