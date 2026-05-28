@@ -1,0 +1,15 @@
+# UNO Q BLE dependency — HOST-side only (for python/ble_bridge.py).
+# The UNO Q's BLE radio is on the Qualcomm Linux side (not the STM32 MCU), and the App Lab
+# container has no BlueZ/D-Bus access, so the live BLE read runs on the host bridge — see
+# python/ble_bridge.py and BRINGUP.md §1. The dashboard container (BLE_TRANSPORT="bridge")
+# reads the bridge over TCP and does NOT need bleak.
+#
+# Install on the UNO Q HOST (pick one):
+#   sudo apt install -y python3-bleak          # recommended on BlueZ (pulls D-Bus deps)
+#   python3 -m pip install -r requirements.txt  # if pip is available
+#
+# Mock mode and bridge-transport dashboard mode need none of this.
+#
+# Version pin is a tested floor (compatible-release). Confirm/refresh against the board with:
+#   python3 -m pip freeze | grep -i bleak
+bleak~=0.22

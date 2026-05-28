@@ -1,0 +1,7 @@
+name: Moonwalk-server
+description: ""
+ports: []
+bricks:
+- arduino:web_ui: {}
+- arduino:dbstorage_tsstore: {}
+icon: 😀

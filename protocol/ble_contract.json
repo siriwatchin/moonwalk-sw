@@ -1,0 +1,27 @@
+{
+  "_comment": "Single source of truth for the NanoIMU BLE contract. Edit THIS file, then run protocol/gen_contract.py to regenerate the firmware header and the Python modules. CI/manual guard: gen_contract.py --check.",
+  "device_name": "NanoIMU",
+  "service_uuid": "19b10000-e8f2-537e-4f6c-d104768a1214",
+  "char_uuid": "19b10001-e8f2-537e-4f6c-d104768a1214",
+  "send_interval_ms": 50,
+  "gravity": 9.80665,
+  "payload_tag": "IMU",
+  "fields": [
+    "timestamp_ms",
+    "ax", "ay", "az",
+    "gx", "gy", "gz",
+    "acc_norm", "gyro_norm",
+    "phase"
+  ],
+  "phase_codes": {
+    "0": "UNKNOWN",
+    "1": "STATIONARY_OR_ZERO_VELOCITY",
+    "2": "GROUND_CONTACT_WITH_ROTATION",
+    "3": "SWING_OR_ON_AIR"
+  },
+  "thresholds": {
+    "acc_near_g": 0.30,
+    "gyro_zero": 2.0,
+    "gyro_swing": 25.0
+  }
+}

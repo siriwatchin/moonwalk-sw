@@ -1,4 +1,21 @@
-.env
+# OS / editor cruft
 .DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Build / archive artifacts
+hardware.zip
+.env
 .netlify/
 .claude/
