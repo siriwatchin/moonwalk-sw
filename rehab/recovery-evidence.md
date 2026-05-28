@@ -8,6 +8,14 @@ no controlled trials).
 
 Sources below were found via Semantic Scholar (`s2cli`). Semantic Scholar `paperId` included for each.
 
+> **Pivot note ([ADR-0013](../docs/adr/0013-refocus-wsfc-to-sprain-strain-recovery.md)).** The WSFC
+> flagship refocused from stroke to **sprain / strain / lower-limb soft-tissue injury recovery via
+> progressive optimal loading**. **Group C** (below) backs the *optimal-loading healing rationale*
+> that the pivot rests on; Groups A/B remain valid adjacent biofeedback-recovery evidence. The
+> *PWB-estimation-is-poor* and *biofeedback-improves-compliance* premises (Dabke 2004, Yu 2014,
+> Lisitano 2025, Hurkmans 2012, van Lieshout 2016, …) live in
+> [`sensing-and-pwb-evidence.md`](sensing-and-pwb-evidence.md) — not duplicated here.
+
 ## Honest framing (read before citing)
 
 - **No RCT exists for instrumented canes/walkers/crutches specifically** with recovery outcomes —
@@ -42,10 +50,27 @@ Sources below were found via Semantic Scholar (`s2cli`). Semantic Scholar `paper
 | 10 | Gordt et al. — *Effects of Wearable Sensor-Based Balance and Gait Training in Healthy and Patient Populations* | 2017 | Gerontology | Meta-analysis of RCTs | Foundational (119 citations). ⚠ abstract elided — verify pooled estimates | `10.1159/000481454` | `4c44096f488558c6d45bfe97d4edb21bbd8bba63` |
 | 11 | Raaben et al. — *Real-time visual biofeedback to improve therapy compliance after total hip arthroplasty* | 2018 | Gait & Posture | Pilot RCT | Load-sensing biofeedback → ↑ weight-bearing adherence post-THA. ⚠ abstract elided — verify direction | `10.1016/j.gaitpost.2018.01.038` | `87f9ef9ccfea7d2243c6314e767cdf653aefb192` |
 
+## Group C — Soft-tissue optimal-loading rationale (sprain/strain pivot · ADR-0013)
+
+The biological "why" for the refocused flagship: controlled progressive load is a healing stimulus,
+and over-protection/immobilization delays soft-tissue recovery. Found via `s2cli`; DOIs/PMIDs verified
+via `s2cli paper`.
+
+| # | Paper | Year | Venue | Design | What it shows | DOI | paperId |
+|---|-------|------|-------|--------|---------------|-----|---------|
+| 12 | Khan & Scott — *Mechanotherapy: how physical therapists' prescription of exercise promotes tissue repair* | 2009 | Br J Sports Med | Review | Foundational: mechanical load drives tissue repair ("mechanotransduction"). The biological premise of progressive optimal loading. (398 cites) | `10.1136/bjsm.2008.054239` (PMID 19244270) | `92e57f27cd0957d52a93141efdacf4c35a96362f` |
+| 13 | Bleakley, Glasgow & MacAuley — *PRICE needs updating, should we call the POLICE?* | 2012 | Br J Sports Med 46(4):220–221 | Editorial | Replaces rest-only PRICE with **POLICE** (Protection, **Optimal Loading**, …). Directly justifies the WSFC's "load it, don't baby it" coaching. (172 cites; S2/DOI tagged 2011 online-first, 2012 print — same paper) | `10.1136/bjsports-2011-090297` (PMID 21903616) | `4e37371e406ee898ace10de3f3e07a521e507834` |
+| 14 | Vílchez-Cavazos et al. — *Functional treatment versus immobilization for acute ankle sprains: a systematic review and meta-analysis* | 2025 | J Bodyw Mov Ther | Systematic review + meta-analysis | Favours early functional/controlled loading over immobilization for acute ankle sprains — the failure mode (over-protection) the WSFC prevents. (New; few cites yet) | `10.1016/j.jbmt.2025.05.035` (PMID 40954619) | `bcacb34c6f61e0cca9a13cbc36a962c9122f9f6c` |
+
+> *Secondary (disuse atrophy, DOI not independently verified — confirm before quoting):* Guo et al. 2025,
+> *Resistance exercise training improves disuse-induced skeletal muscle atrophy: a meta-analysis of RCTs*,
+> *BMC Musculoskelet Disord*, S2 `ad7c43da9af5c16657d5eb1e615bc43819b8cadf`.
+
 ---
 
 ## Quick-pick guidance
 
+- **Need the "why optimal loading" rationale (the sprain/strain pivot)** → Khan & Scott 2009 (#12, mechanotherapy) + Bleakley POLICE 2012 (#13).
 - **Need one headline claim that sensor biofeedback aids recovery** → Wang et al. 2025 (#8).
 - **Need the closest analogue to a smart walking aid reducing recovery time** → Castellarin 2022 (#4) load-feedback insole, TKA fast-track discharge.
 - **Need a balanced/honest counterpoint** → Mao 2024 (#9, wearables underperformed) and Ambrosini 2020 (#6, no overall superiority).
