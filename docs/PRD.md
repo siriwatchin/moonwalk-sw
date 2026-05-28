@@ -53,6 +53,21 @@ progressive load accelerates soft-tissue healing. No cane-biofeedback RCT for sp
 recovery yet exists, so the WSFC's pitch is to *generate* that evidence via the team's own
 validation (ADR-0013; see [`rehab/`](../rehab)).
 
+**Headline metrics — three, co-equal, no ranking among them.** The WSFC leads with three
+existing metrics, presented together as the most important reads; none outranks the others:
+
+- **Symmetry & Rhythm (limp)** — the live-today, strongest-evidence read on a limp, framed as
+  **cane-mode temporal step-time symmetry**: an IMU symmetry ratio from alternating L/R plant
+  intervals plus rhythm consistency (1 − step-time CV). *(Walker-mode dual-grip load asymmetry is
+  a future secondary route to the same signal — never the headline.)*
+- **Stick Duty Factor** — the fraction of each **Stick Cycle** the cane is loaded; a force-free
+  read on cane dependence.
+- **Session Weight-Support Training Load** — the per-session integrated loading-quality dose
+  (intensity × volume); the engagement / adherence figure.
+
+Every figure is relative to the **Patient's own Baseline** — never %body-weight, never absolute
+force, never fall-risk, never diagnosis, never a population norm (ADR-0010, ADR-0013).
+
 **Secondary — wellness gait monitoring** (ADR-0005). The same sensor also **measures and
 trends** the user's **Gait** — cadence, duty factor, loading, asymmetry, stride/velocity
 trends — learns the individual **Baseline** on-device, detects sustained **Drift**, and
