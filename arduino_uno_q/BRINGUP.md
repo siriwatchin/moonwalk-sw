@@ -131,3 +131,35 @@ cd ../arduino && pip install -r requirements.txt && python3 ble_smoketest.py
 | `[rest] disconnected / reconnecting (no bridge)` in the dashboard console | The host REST bridge isn't up/reachable (`BLE_TRANSPORT="rest"`). Start `host_bridge/ble_bridge.py` (or its systemd service) and verify `curl 172.17.0.1:8787/health`; check `REST_BRIDGE_URL` in `config.py`. |
 | `FileNotFoundError` / DBus errors from `bleak` **inside App Lab** | Expected — the container has no BlueZ/D-Bus. Don't run `scan`/`debug`/`direct` BLE in the container; use the host bridge (§1) and keep `BLE_TRANSPORT="bridge"`. |
 | DBus / permission errors on the **host** | Run under a user in the `bluetooth` group (or root) on the UNO Q host. |
+
+## 7. InfluxDB probe (Analysis page)
+
+The Analysis tab reads the InfluxDB the brick is writing to, at the wire level. The default
+config points at the on-board InfluxDB at `http://172.17.0.1:8086` with `admin`/`Arduino15`.
+Run this probe once after the first deploy to confirm the version and DB/bucket name, and
+to pin them in `config.py` so the client doesn't pay an auto-discovery round-trip per query.
+
+```bash
+ssh arduino@walkserver.local
+# Version (1.x vs 2.x) — the X-Influxdb-Version response header.
+curl -sI http://localhost:8086/ping | grep -i influx
+
+# 1.x path: list user databases (the brick's writes land in one of these).
+curl -s -u admin:Arduino15 \
+  'http://localhost:8086/query?q=SHOW+DATABASES' | jq '.results[0].series[0].values'
+
+# 2.x path: list non-system buckets.
+curl -s -u admin:Arduino15 http://localhost:8086/api/v2/buckets \
+  | jq '.buckets[] | select(.name | startswith("_") | not) | .name'
+
+# Ground truth: how the brick was configured in the container.
+docker exec arduino_uno_q-main-1 env | grep -i influx
+```
+
+Update `python/config.py` with the discovered values (`INFLUX_DB` for 1.x;
+`INFLUX_BUCKET` + `INFLUX_ORG` for 2.x), `./sync.sh`, restart the App Lab container, then
+verify with `curl http://walkserver.local:7000/api/analysis/health`.
+
+If the response says `available: false` or `reachable: false`, the dashboard's realtime view
+is unaffected — `/api/analysis/*` returns 503 with a clear message in the UI, and the
+Realtime tab keeps working.

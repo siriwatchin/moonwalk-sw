@@ -230,10 +230,48 @@ def run_dashboard(empty: bool) -> None:
                        address=STARTUP_SOURCE.get("address"),
                        label=STARTUP_SOURCE.get("label"))
 
+    # Analysis service (cold-path; reads InfluxDB directly via influx_client.py). Constructed
+    # lazily — the client doesn't hit the wire until the first /api/analysis/* call, so an
+    # InfluxDB that's slow/unreachable at boot doesn't delay App.run(). If the *construction*
+    # itself raises (bad config), we still want the dashboard up: log and pass None, which
+    # makes /api/analysis/* return 503 while the realtime path stays alive.
+    analysis = None
+    try:
+        from influx_client import InfluxClient
+        from analysis import AnalysisParams, AnalysisService
+        influx = InfluxClient(
+            url=config.INFLUX_URL,
+            username=config.INFLUX_USER,
+            password=config.INFLUX_PASSWORD,
+            token=config.INFLUX_TOKEN,
+            db=config.INFLUX_DB,
+            bucket=config.INFLUX_BUCKET,
+            org=config.INFLUX_ORG,
+            measurement=config.INFLUX_MEASUREMENT,
+            timeout_s=config.INFLUX_TIMEOUT_S,
+        )
+        analysis = AnalysisService(
+            influx,
+            params=AnalysisParams(
+                plant_gyro_dps=config.PLANT_GYRO_DPS,
+                plant_refractory_ms=config.PLANT_REFRACTORY_MS,
+                stick_length_m=config.STICK_LEN_M,
+                p_tare_pa=config.P_TARE_PA,
+                wsfc_target_pct=config.WSFC_TARGET_PCT,
+            ),
+            downsample_ms=config.ANALYSIS_DOWNSAMPLE_MS,
+            default_duration_s=config.ANALYSIS_DEFAULT_DURATION_S,
+        )
+        print(f"[main] analysis ready (InfluxDB at {config.INFLUX_URL})", flush=True)
+    except Exception as exc:
+        print(f"[main] analysis disabled: {exc!r} — /api/analysis/* will 503", flush=True)
+
     # WebUI Brick: register the /api/* routes (read + control). tsstore is passed in so
     # /api/export/history can serve cold-path range exports (CSV modal in the dashboard).
+    # analysis is passed in so /api/analysis/* can compute reports over windows of the same
+    # InfluxDB data; None ⇒ those routes return 503.
     from webui_server import WebUIServer
-    _server = WebUIServer(registry, mgr, tsstore=tsstore)  # noqa: F841
+    _server = WebUIServer(registry, mgr, tsstore=tsstore, analysis=analysis)  # noqa: F841
 
     print(f"UNO Q IMU dashboard starting (port={UI_PORT}, "
           f"{'empty' if empty else 'STARTUP_SOURCE'})", flush=True)

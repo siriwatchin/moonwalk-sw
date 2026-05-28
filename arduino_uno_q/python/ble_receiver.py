@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import subprocess
 import threading
 import time
 from collections.abc import Iterator
@@ -25,6 +26,15 @@ _SENTINEL = object()  # pushed to unblock lines() on stop
 _BACKOFF_START_S = 1.0   # reconnect backoff grows 1→2→4…→cap, resets after a real session
 _BACKOFF_MAX_S = 30.0
 _SESSION_OK_S = 10.0     # a session lasting this long counts as "connected" → reset backoff
+# BlueZ can wedge its management socket (every scan returns
+# `[org.bluez.Error.InProgress] Operation already in progress`) when a previous scan/connect
+# wasn't released cleanly. The only thing that actually unblocks it is restarting bluetoothd;
+# hciconfig hci0 reset / rfkill cycles do not. After this many consecutive InProgress errors
+# we run `sudo -n systemctl restart bluetooth` — requires a passwordless sudoers entry on the
+# host (see arduino_uno_q/DEPLOY.md). Without that entry the call is a no-op and we just
+# keep retrying — same behaviour as before this guard existed.
+_WEDGE_THRESHOLD = 3
+_BLUEZ_RESTART_CMD = ["sudo", "-n", "systemctl", "restart", "bluetooth"]
 
 
 def scan(timeout: float = 8.0) -> list[dict]:
@@ -153,15 +163,36 @@ class BleNanoReceiver:
         else:
             self._set_status("disconnected / reconnecting")
 
+    def _restart_bluez(self) -> None:
+        """Self-heal a BlueZ wedge by restarting bluetoothd. See _WEDGE_THRESHOLD."""
+        self._set_status("adapter wedged — restarting BlueZ")
+        try:
+            subprocess.run(_BLUEZ_RESTART_CMD, check=False, timeout=10,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as exc:
+            print(f"[ble] BlueZ restart failed: {exc} "
+                  "(needs passwordless sudoers entry — see DEPLOY.md)", flush=True)
+
     def _run_loop(self) -> None:
         async def forever():
             backoff = _BACKOFF_START_S
+            wedged = 0           # consecutive InProgress errors (cleared by any session OR non-wedge error)
             while not self._stop.is_set():
                 t0 = time.monotonic()
                 try:
                     await self._run_once()
+                    wedged = 0    # any clean return means BlueZ talked to us → not wedged
                 except Exception as exc:        # keep going across BLE errors
                     self._set_status(f"error: {exc}")
+                    if "in progress" in str(exc).lower():
+                        wedged += 1
+                        if wedged >= _WEDGE_THRESHOLD:
+                            self._restart_bluez()
+                            wedged = 0
+                            # bluetoothd needs a moment to come back; bleak will reconnect on next loop
+                            await asyncio.sleep(3.0)
+                    else:
+                        wedged = 0
                 if self._stop.is_set():
                     break
                 # Reset backoff only after a session that actually lasted (a real connection),

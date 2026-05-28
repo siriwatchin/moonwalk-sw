@@ -55,6 +55,16 @@ const unsigned long SEND_INTERVAL_MS = 50;
 const unsigned long INIT_RETRY_MS    = 1000;
 const unsigned int  INIT_MAX_ATTEMPTS = 10;
 
+// Pressure-alarm indicator on D2. Three modes evaluated each loop from `lastPressurePa`:
+//   p <= PRESSURE_ALARM_PA            → LED off + reset hold timer
+//   p >  PRESSURE_ALARM_PA, held <10s → LED solid on
+//   p >  PRESSURE_ALARM_PA, held ≥10s → LED blinks ~1 s/cycle (500 ms on / 500 ms off)
+// No hysteresis: ambient ~101300 Pa is ~4 kPa below the threshold so flicker isn't a risk.
+const float         PRESSURE_ALARM_PA       = 105000.0f;
+const unsigned long PRESSURE_ALARM_DELAY_MS = 10000;
+const unsigned long PRESSURE_ALARM_BLINK_MS = 500;
+const uint8_t       LED_PRESSURE_PIN        = 2;
+
 // --------------------------------------------------------------------------
 // BLE objects
 // --------------------------------------------------------------------------
@@ -83,6 +93,10 @@ const unsigned long BME_READ_INTERVAL_MS = 1000;   // pressure changes slowly: r
 // --------------------------------------------------------------------------
 
 unsigned long lastSendMs = 0;
+
+// 0 = lastPressurePa is currently ≤ threshold (also the boot state); else = millis() of the
+// first sample that crossed above. Used by updatePressureLed() to drive solid-vs-blink.
+unsigned long pressureHighSinceMs = 0;
 
 // BLE multi-central state. Mbed/Cordio's ArduinoBLE stack supports up to DM_CONN_MAX
 // simultaneous centrals (default 3); BLENotify auto-broadcasts to every subscribed
@@ -216,6 +230,32 @@ void updatePressure() {
       lastWarnMs = now;
     }
     bmeReading = false;
+  }
+}
+
+// --------------------------------------------------------------------------
+// Pressure-alarm LED on D2 — non-blocking, evaluated each loop
+// --------------------------------------------------------------------------
+
+// Reads lastPressurePa (refreshed ~1 Hz by updatePressure()) and drives D2 directly. The
+// blink phase is derived from a single `heldFor` calculation so the transition solid → blink
+// at the 10 s mark starts on the "on" half — no visible dropout.
+void updatePressureLed() {
+  unsigned long now = millis();
+  if (lastPressurePa > PRESSURE_ALARM_PA) {
+    if (pressureHighSinceMs == 0) {
+      pressureHighSinceMs = now;
+    }
+    unsigned long heldFor = now - pressureHighSinceMs;
+    if (heldFor < PRESSURE_ALARM_DELAY_MS) {
+      digitalWrite(LED_PRESSURE_PIN, HIGH);
+    } else {
+      bool on = ((heldFor - PRESSURE_ALARM_DELAY_MS) / PRESSURE_ALARM_BLINK_MS) % 2 == 0;
+      digitalWrite(LED_PRESSURE_PIN, on ? HIGH : LOW);
+    }
+  } else {
+    pressureHighSinceMs = 0;
+    digitalWrite(LED_PRESSURE_PIN, LOW);
   }
 }
 
@@ -397,6 +437,10 @@ void setup() {
 
   Serial.println("IMU init OK");
 
+  // Pressure-alarm LED on D2 — start dark so we don't flash before the first BME680 read.
+  pinMode(LED_PRESSURE_PIN, OUTPUT);
+  digitalWrite(LED_PRESSURE_PIN, LOW);
+
   // BME680 over the hardware `Wire` bus (A4=SDA, A5=SCL). Optional: a few retries, then carry on
   // without it (we still stream IMU, with pressure = 0) rather than reboot — it's a secondary sensor.
   Wire.begin();
@@ -528,6 +572,10 @@ void loop() {
   // BEFORE the connect-gate so the sensor is exercised + the [bme] heartbeat appears in Serial
   // from boot — without waiting for a BLE central to pair (key for bring-up debugging).
   updatePressure();
+
+  // Drive the D2 alarm LED off the same `lastPressurePa` — has to run BEFORE the connect-gate
+  // so the indicator works whether or not a central is subscribed.
+  updatePressureLed();
 
   // One-shot "resumed" log when the settle window expires — easier to read than inferring
   // resume from the payload mirror reappearing 2 s after a connect.

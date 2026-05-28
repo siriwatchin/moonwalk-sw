@@ -19,7 +19,7 @@ import re
 import time
 from urllib.parse import quote
 
-from config import RECENT_POINTS
+from config import ANALYSIS_DEFAULT_DURATION_S, RECENT_POINTS
 from registry import DeviceRegistry
 from source_manager import ACTIVE   # single internal storage key for the active source
 
@@ -27,7 +27,7 @@ from source_manager import ACTIVE   # single internal storage key for the active
 class WebUIServer:
     """Registers the dashboard REST API on the WebUI brick (multi-device)."""
 
-    def __init__(self, registry: DeviceRegistry, manager, tsstore=None):
+    def __init__(self, registry: DeviceRegistry, manager, tsstore=None, analysis=None):
         from arduino.app_bricks.web_ui import WebUI  # required — UNO Q / App Lab only
 
         self.reg = registry
@@ -35,6 +35,9 @@ class WebUIServer:
         # tsstore is optional so existing call sites that don't yet pass it (e.g. tests / old
         # off-device probes) keep working. /api/export/history will 503 in that case.
         self.tsstore = tsstore
+        # analysis is also optional — main.py passes None if InfluxDB is unreachable at boot
+        # so the dashboard still starts. /api/analysis/* will 503 in that case.
+        self.analysis = analysis
         self.ui = WebUI()
         self._register_api()
 
@@ -121,6 +124,83 @@ class WebUIServer:
             return Response(content=csv_text, media_type="text/csv",
                             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
         ui.expose_api("GET", "/api/export/history", _export_history)
+
+        # ---- Analysis (cold-path; reads InfluxDB directly via influx_client.py) ----
+        # Three GETs; all 503 if `self.analysis is None` (InfluxDB unreachable at boot or
+        # auth bad). Realtime endpoints stay alive in that state — the dashboard's live view
+        # is unaffected, only the Analysis tab degrades.
+
+        def _analysis_window(
+            start: str = Query(default="", alias="from"),
+            end: str = Query(default="", alias="to"),
+            device: str = Query(default=ACTIVE),
+        ):
+            # `from` is a Python keyword so we accept it under the alias and bind to `start`
+            # — same pattern as /api/export/history (consistent for the frontend).
+            if not start or not end:
+                return Response(content="missing from/to (ISO8601)", status_code=400,
+                                media_type="text/plain")
+            if self.analysis is None:
+                return Response(content="analysis service unavailable (InfluxDB unreachable)",
+                                status_code=503, media_type="text/plain")
+            try:
+                return self.analysis.compute(start, end, device_key=device)
+            except Exception as exc:
+                print(f"[webui] /api/analysis/window failed: {exc}", flush=True)
+                return Response(content=f"analysis failed: {exc}", status_code=500,
+                                media_type="text/plain")
+        ui.expose_api("GET", "/api/analysis/window", _analysis_window)
+
+        def _analysis_latest(
+            duration_s: str = Query(default=str(ANALYSIS_DEFAULT_DURATION_S)),
+            device: str = Query(default=ACTIVE),
+        ):
+            if self.analysis is None:
+                return Response(content="analysis service unavailable (InfluxDB unreachable)",
+                                status_code=503, media_type="text/plain")
+            try:
+                dur = int(duration_s)
+            except (TypeError, ValueError):
+                dur = ANALYSIS_DEFAULT_DURATION_S
+            try:
+                return self.analysis.latest(duration_s=dur, device_key=device)
+            except Exception as exc:
+                print(f"[webui] /api/analysis/latest failed: {exc}", flush=True)
+                return Response(content=f"analysis failed: {exc}", status_code=500,
+                                media_type="text/plain")
+        ui.expose_api("GET", "/api/analysis/latest", _analysis_latest)
+
+        def _analysis_health(_req=None):
+            # Returns {available, version, db|bucket, params} so the frontend can render a
+            # clear "Analysis offline" message instead of a generic 503.
+            if self.analysis is None:
+                return {"available": False, "reason": "service not constructed (Influx unreachable at boot)"}
+            try:
+                return {"available": True, "influx": self.analysis.health(),
+                        "params": self.analysis.params_dict()}
+            except Exception as exc:
+                return {"available": False, "reason": str(exc)}
+        ui.expose_api("GET", "/api/analysis/health", _analysis_health)
+
+        def _analysis_labels(_req=None):
+            # List the device-key prefixes that have data in InfluxDB. Used by the Analysis
+            # tab's device dropdown so the user can switch between A / B / future devices
+            # without poking the URL. 503 if the analysis service is unavailable (same as
+            # the other /api/analysis/* routes; the realtime path stays alive).
+            if self.analysis is None:
+                return Response(content="analysis service unavailable",
+                                status_code=503, media_type="text/plain")
+            try:
+                devices = self.analysis.list_devices() or []
+            except Exception as exc:
+                print(f"[webui] /api/analysis/labels failed: {exc}", flush=True)
+                return Response(content=f"labels probe failed: {exc}",
+                                status_code=500, media_type="text/plain")
+            return {
+                "devices": devices,
+                "default": ACTIVE if ACTIVE in devices else (devices[0] if devices else None),
+            }
+        ui.expose_api("GET", "/api/analysis/labels", _analysis_labels)
 
         # Download the last finished recording (start→stop session) as a CSV file. The browser
         # navigates here right after POST /api/record/stop. Recording state is in /api/status.

@@ -39,9 +39,11 @@
         <!-- Brand (left) -->
         <h1 class="text-lg font-semibold m-0 shrink-0">🦯 Smart Cane IMU</h1>
 
-        <nav aria-label="Page" class="join shrink-0 hidden sm:inline-flex">
-          <span class="join-item btn btn-sm btn-active no-animation" aria-current="page">Realtime</span>
-          <span class="join-item btn btn-sm btn-disabled" aria-disabled="true" title="coming soon">Analysis</span>
+        <nav aria-label="Page" class="join shrink-0 hidden sm:inline-flex" data-tab-nav>
+          <button class="join-item btn btn-sm btn-active no-animation" data-tab="realtime"
+            aria-current="page">Realtime</button>
+          <button class="join-item btn btn-sm" data-tab="analysis"
+            title="Gait trends from history">Analysis</button>
         </nav>
 
         <!-- Live badge + meta — visible on every breakpoint (it's the primary state cue). -->
@@ -98,10 +100,101 @@
         <div id="srcHint" role="status" aria-live="polite" class="text-xs opacity-70">Realtime IMU — pick an active source above (mock, or a scanned Nano). Tap <b>☰</b> on mobile for the full control surface.</div>
       </div>
 
-      <!-- Single realtime panel: 7 channels (accel row · gyro row · pressure full-width row).
-           Built once by app.js. -->
+      <!-- Two tab panels: realtime (the original 7-channel scrolling charts) and analysis
+           (gait metrics computed from the InfluxDB history). Tabs are switched in app.js by
+           toggling the `hidden` attribute; the inactive panel stops its work (realtime pauses
+           its poll loops, analysis tears down its Chart.js instances). -->
       <main class="flex-1 min-h-0 p-2 sm:p-3">
-        <section id="panel" class="lg:h-full"></section>
+        <section id="panel-realtime" data-tab-panel="realtime" class="lg:h-full">
+          <!-- Built once by app.js / buildPanel(). -->
+          <section id="panel" class="lg:h-full"></section>
+        </section>
+
+        <section id="panel-analysis" data-tab-panel="analysis" class="lg:h-full" hidden>
+          <div class="h-full overflow-auto flex flex-col gap-3">
+            <!-- Range controls: presets + custom datetime-local + Refresh. -->
+            <div class="flex flex-wrap items-center gap-2 px-1">
+              <div class="join" role="group" aria-label="Range preset">
+                <button class="join-item btn btn-sm btn-active" data-range-preset="600">Last 10 min</button>
+                <button class="join-item btn btn-sm" data-range-preset="3600">Last 1 hr</button>
+                <button class="join-item btn btn-sm" data-range-preset="86400">Last 24 hr</button>
+                <button class="join-item btn btn-sm" data-range-preset="custom">Custom…</button>
+              </div>
+              <div class="flex items-center gap-2 hidden" data-range-custom>
+                <input type="datetime-local" class="input input-bordered input-sm" data-range-from aria-label="From">
+                <span class="text-xs opacity-60">to</span>
+                <input type="datetime-local" class="input input-bordered input-sm" data-range-to aria-label="To">
+              </div>
+              <!-- Device-key picker. Populated from /api/analysis/labels on first tab entry;
+                   if the probe fails, the select stays disabled with the default "Device A". -->
+              <select class="select select-bordered select-sm" data-analysis-device
+                aria-label="Choose device" disabled>
+                <option value="A">Device A</option>
+              </select>
+              <span class="flex-1"></span>
+              <button class="btn btn-sm btn-outline" data-action="analysis-refresh" aria-label="Refresh analysis">↻ Refresh</button>
+            </div>
+
+            <!-- Header band: title (what / which device) + source badge (current live source)
+                 on top row; subtitle (range / duration / samples / axis) on bottom row.
+                 The badge labels the *currently streaming* source, not necessarily what
+                 streamed during the analyzed window — tooltip says so. -->
+            <div class="px-1 flex flex-wrap items-start gap-2" data-analysis-header>
+              <div class="flex-1 min-w-0">
+                <div class="text-base font-semibold flex items-center gap-2" data-analysis-title>
+                  🦯 Gait analysis
+                </div>
+                <!-- Subtitle keeps the legacy `data-analysis-status` hook for any external JS. -->
+                <div class="text-xs opacity-70 mt-0.5" data-analysis-subtitle data-analysis-status>—</div>
+              </div>
+              <span class="badge badge-ghost gap-1 shrink-0" data-analysis-source
+                title="Currently streaming source. Analyzed data is historical — the live source during that window may have differed.">
+                — no source
+              </span>
+            </div>
+
+            <!-- Summary cards grid: 6 stat cards (3 cols on lg, 1 col on sm). Filled by
+                 renderAnalysis(); seeded with skeleton stubs by renderAnalysisSkeleton(). -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 px-1" data-analysis-cards>
+            </div>
+
+            <!-- Charts grid: cadence trend + cycle-time histogram + planted timeline.
+                 The `relative` wrapper around each canvas is what `clearChartSkeletons()`
+                 layers a full-cover `.skel` overlay into during fetch. -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 px-1">
+              <div class="card bg-base-200 shadow-sm">
+                <div class="card-body p-3">
+                  <h3 class="card-title text-sm">Cadence trend</h3>
+                  <div class="relative h-48" data-analysis-chart-wrap="cadence">
+                    <canvas data-analysis-chart="cadence"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="card bg-base-200 shadow-sm">
+                <div class="card-body p-3">
+                  <h3 class="card-title text-sm">Cycle-time distribution</h3>
+                  <div class="relative h-48" data-analysis-chart-wrap="cycleHist">
+                    <canvas data-analysis-chart="cycleHist"></canvas>
+                  </div>
+                </div>
+              </div>
+              <div class="card bg-base-200 shadow-sm lg:col-span-2">
+                <div class="card-body p-3">
+                  <h3 class="card-title text-sm">Planted / swing timeline</h3>
+                  <div class="relative h-32" data-analysis-chart-wrap="timeline">
+                    <canvas data-analysis-chart="timeline"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Footnote: best-effort L/R label + Phase 2 hint. -->
+            <p class="text-[11px] opacity-60 px-1">
+              L/R is a best-effort alternation label, not handedness.
+              Handle Load / Weight-Support Compliance are coming in a later release.
+            </p>
+          </div>
+        </section>
       </main>
 
       <!-- Product-framing disclaimer (CLAUDE.md / ADR-0005): Moon Walk is wellness self-monitoring,
@@ -284,8 +377,60 @@
     <form method="dialog" class="modal-backdrop"><button>close</button></form>
   </dialog>
 
+  <!-- ===== Per-chart settings modal (daisyUI <dialog>) ====================== -->
+  <!-- Opened from the ⚙ button in each chart cell's header. data-cfg-active on the box holds
+       the currently-edited channel field (ax, ay, …) so input handlers know which entry of
+       peakCfgs to mutate. All controls live-update; closing is just dismissing (no Save). -->
+  <dialog id="dlgChartCfg" class="modal">
+    <div class="modal-box max-w-sm" data-cfg-active="">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close">✕</button>
+      </form>
+      <h3 class="text-lg font-bold mb-1">Settings: <span data-cfg-title>—</span></h3>
+      <p class="text-xs opacity-70 mb-3">Tune peak detection for this channel only. Changes apply live.</p>
+
+      <div class="space-y-4">
+        <label class="cursor-pointer flex items-center gap-2">
+          <input type="checkbox" data-cfg-enabled class="checkbox checkbox-sm" />
+          <span class="label-text">Detect peaks</span>
+        </label>
+
+        <label class="form-control">
+          <div class="flex justify-between">
+            <span class="label-text text-sm">Threshold multiplier</span>
+            <span class="text-sm font-semibold tabular-nums" data-cfg-mult-val>5.0×</span>
+          </div>
+          <input type="range" data-cfg-mult min="2" max="20" step="0.5" class="range range-sm" />
+          <span class="label-text-alt text-[11px] opacity-60 mt-1">Peak if |value − baseline| &gt; multiplier × MAD</span>
+        </label>
+
+        <label class="form-control">
+          <div class="flex justify-between">
+            <span class="label-text text-sm">Cluster gap</span>
+            <span class="text-sm font-semibold tabular-nums" data-cfg-gap-val>200ms</span>
+          </div>
+          <input type="range" data-cfg-gap min="50" max="1000" step="50" class="range range-sm" />
+          <span class="label-text-alt text-[11px] opacity-60 mt-1">Above-threshold samples within this window merge into one peak event.</span>
+        </label>
+
+        <label class="cursor-pointer flex items-center gap-2">
+          <input type="checkbox" data-cfg-visible class="checkbox checkbox-sm" />
+          <span class="label-text">Show this chart</span>
+        </label>
+      </div>
+
+      <div class="modal-action">
+        <form method="dialog"><button class="btn btn-primary btn-sm">Done</button></form>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
   <!-- Vendored Chart.js (offline, no CDN — same policy as tailwind.css). Realtime line charts. -->
   <script src="chart.umd.min.js"></script>
+  <!-- Vendored chartjs-plugin-datalabels (offline). Used to label peak markers with the value
+       on the peak dataset; disabled by default in app.js so the line dataset stays clean. -->
+  <script src="chartjs-plugin-datalabels.min.js"></script>
   <!-- Pure REST polling (no Socket.IO). app.js polls the incremental /api/samples endpoint and
        appends into a browser-side ring buffer; rendering is on a separate throttled loop. -->
   <script src="app.js"></script>

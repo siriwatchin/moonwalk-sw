@@ -49,12 +49,20 @@ let currentSource = { kind: "none" };  // last-known active source config (used 
 // Calibrate a baseline per channel from the first calibrationMs of data, then mark samples
 // whose deviation from baseline exceeds `multiplier × MAD` as peaks. baseline + peaks live
 // in the browser only — backend has no notion of either. Refresh = recalibrate (intended).
-const PEAK_DEFAULT = { enabled: true, multiplier: 5, calibrationMs: 5000 };
-const peakCfg = { ...PEAK_DEFAULT };
+// Calibration warmup is global (one recalibrate covers all channels). Everything else lives
+// per-channel in peakCfgs[ch.f] so the user can tune each gait signal independently — accel
+// impacts need a different threshold than a slow pressure drift. clusterGapMs merges
+// consecutive above-threshold samples within this gap into a single peak event (the biggest
+// |deviation| wins) — without it, a cane impact covers 2-4 samples at 50 ms each and Δt
+// between "adjacent peaks" reads as the sample interval instead of step cadence.
+const peakCfg = { calibrationMs: 5000 };
+const PEAK_CH_DEFAULT = { enabled: true, multiplier: 5, clusterGapMs: 200, visible: true };
+const peakCfgs = {};   // field -> { enabled, multiplier, clusterGapMs, visible }
 const calib = { active: false, anchorT: null, samples: {}, baseline: {} };
-const peaks = {};   // field -> [{x, y, mid}]  (x = Nano timestamp_ms — must be "x" not "t"
-                    // because baseOptions sets parsing:false; mid = baseline mean for label placement)
+const peaks = {};      // field -> [{x, y, mid}]  (x = Nano timestamp_ms — must be "x" not "t"
+                       // because baseOptions sets parsing:false; mid = baseline mean for label placement)
 for (const ch of CHANNELS) {
+  peakCfgs[ch.f] = { ...PEAK_CH_DEFAULT };
   calib.samples[ch.f] = [];
   calib.baseline[ch.f] = { mean: 0, amp: 0, ready: false };
   peaks[ch.f] = [];
@@ -227,11 +235,20 @@ function buildPanel() {
   root.className = "bg-[var(--panel)] border border-[var(--border)] rounded-xl p-3 flex flex-col min-h-0 lg:h-full";
   // The pressure cell spans the full bottom row so the 7-channel grid stays balanced (accel
   // row · gyro row · pressure full-width) instead of leaving two empty cells in 3×3.
+  // Each chart cell carries data-cell="<field>" at the root — used to hide/show the cell when
+  // the per-chart "Show this chart" toggle flips. The ⚙ button in the header opens dlgChartCfg
+  // pre-populated with that channel's peakCfgs entry; multi-channel tuning is the whole point
+  // of F#4 (per-chart settings) so the button needs to be discoverable on every cell.
   const chart = (key, title, wide) =>
-    `<div class="flex flex-col min-h-[140px] lg:min-h-0${wide ? " md:col-span-2 lg:col-span-3" : ""}">
+    `<div class="flex flex-col min-h-[140px] lg:min-h-0${wide ? " md:col-span-2 lg:col-span-3" : ""}"
+          data-cell="${key}">
        <div class="flex items-baseline justify-between gap-1 shrink-0">
          <span class="text-[10px] uppercase tracking-wider text-[var(--muted)]">${title}</span>
-         <span class="text-[11px] font-semibold tabular-nums" data-val${key}>—</span>
+         <span class="flex items-baseline gap-1">
+           <span class="text-[11px] font-semibold tabular-nums" data-val${key}>—</span>
+           <button type="button" class="text-[var(--muted)] opacity-60 hover:opacity-100 leading-none px-1"
+                   data-chart-cfg="${key}" aria-label="Settings for ${title}" title="Chart settings">⚙</button>
+         </span>
        </div>
        <div class="relative flex-1 min-h-0">
          <canvas data-c${key}></canvas>
@@ -247,23 +264,24 @@ function buildPanel() {
     </div>
     <!-- Data-quality chips (daisyUI badges) populated by pollStatus. Empty until a source is set. -->
     <div class="flex flex-wrap items-center gap-1 mb-2 shrink-0" data-meta></div>
-    <!-- Peak detection controls. Baseline is per-channel MAD calibrated over the first
-         calibrationMs of data; the multiplier slider re-detects across the whole buffer so the
-         new threshold applies instantly. Markers + value labels live on the charts below
-         (datasets[1] + peakLabelPlugin). -->
+    <!-- Slim global row. Per-chart settings (multiplier / cluster gap / enabled / visible) moved
+         into the ⚙ button on each chart cell — only baseline reset and overall status live here.
+         The "hidden charts" dropdown appears only when at least one chart is hidden, so the user
+         can recover a channel whose ⚙ button is no longer on screen. -->
     <div class="flex flex-wrap items-center gap-2 mb-2 shrink-0 text-xs">
       <span class="text-[10px] uppercase tracking-wider opacity-60">Peak</span>
-      <label class="cursor-pointer flex items-center gap-1">
-        <input type="checkbox" data-peak-enabled class="checkbox checkbox-xs" checked />
-        <span>on</span>
-      </label>
-      <span class="opacity-60">×</span>
-      <input type="range" data-peak-mult min="2" max="20" step="0.5" value="5"
-             class="range range-xs w-28" aria-label="Peak threshold multiplier" />
-      <span class="font-semibold tabular-nums w-10" data-peak-mult-val>5.0×</span>
       <button class="btn btn-ghost btn-xs" data-action="recalibrate"
               aria-label="Recalibrate baseline">↻ recalibrate</button>
       <span class="text-[var(--muted)]" data-peak-status>—</span>
+      <span class="flex-1"></span>
+      <div class="dropdown dropdown-end hidden" data-hidden-wrap>
+        <button tabindex="0" role="button" class="btn btn-ghost btn-xs"
+                aria-label="Show hidden charts" title="Show hidden charts">
+          <span data-hidden-count>0</span> hidden ▾
+        </button>
+        <ul tabindex="0" class="dropdown-content z-30 menu bg-base-200 text-base-content shadow-lg rounded-box w-48 p-1 mt-1 text-xs"
+            data-hidden-list role="menu"></ul>
+      </div>
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 lg:grid-rows-3 gap-2 flex-1 min-h-0">
       ${CHANNELS.map((c) => chart(c.f, c.title, c.f === "pressure")).join("")}
@@ -317,11 +335,44 @@ function makeLineChart(canvas, color) {
       datasets: [
         { data: [], borderColor: color, borderWidth: 1.5, pointRadius: 0, tension: 0, spanGaps: false, fill: false },
         // datasets[1] = peak markers (scatter-style: showLine:false). Coordinates are
-        // {x: Nano timestamp_ms, y: value} — same x-space as the line, so markers scroll
-        // with the trace as the 10 s window slides.
-        { data: [], showLine: false, pointRadius: 4, pointHoverRadius: 4,
+        // {x: Nano timestamp_ms, y: value, mid: baseline mean} — same x-space as the line, so
+        // markers scroll with the trace as the 10 s window slides. datalabels opt-in here only
+        // (line dataset stays clean via the global `display:false` default set above).
+        {
+          data: [], showLine: false, pointRadius: 4, pointHoverRadius: 4,
           pointBackgroundColor: "rgba(239,68,68,0.9)", pointBorderColor: "rgba(239,68,68,1)",
-          pointBorderWidth: 1.5, borderColor: "rgba(0,0,0,0)" },
+          pointBorderWidth: 1.5, borderColor: "rgba(0,0,0,0)",
+          datalabels: {
+            display: true,
+            // parsing:false ⇒ formatter receives the raw point object ({x, y, mid}), not just y.
+            formatter: (v) => fmt(v.y),
+            anchor: "end",
+            // Peak above baseline → label above; below baseline → label below.
+            align: (ctx) => {
+              const pt = ctx.dataset.data[ctx.dataIndex];
+              return pt && pt.y >= (pt.mid ?? 0) ? "top" : "bottom";
+            },
+            offset: 4,
+            clip: false,            // let labels poke outside the chart area near top/bottom edges
+            color: "rgba(239,68,68,1)",
+            font: { size: 10, family: "ui-sans-serif, system-ui, sans-serif", weight: "600" },
+          },
+        },
+        // datasets[2] = Δt labels between adjacent peaks. Invisible markers (pointRadius:0)
+        // at the midpoint of each peak pair; datalabels draws the gap in ms in gray so it
+        // reads as "interval" rather than "value" (which is red on datasets[1]).
+        {
+          data: [], showLine: false, pointRadius: 0,
+          borderColor: "rgba(0,0,0,0)", backgroundColor: "rgba(0,0,0,0)",
+          datalabels: {
+            display: true,
+            formatter: (v) => `${Math.round(v.dt)}ms`,
+            anchor: "center", align: "center",
+            color: "rgba(107,114,128,1)",   // gray-500 — distinct from the red peak labels
+            font: { size: 9, family: "ui-sans-serif, system-ui, sans-serif", weight: "500" },
+            clip: false,
+          },
+        },
       ],
     },
     options: baseOptions(),
@@ -363,6 +414,24 @@ function finalizeBaseline() {
   recomputePeaks();
 }
 
+// Cluster-aware push: if the new point falls within peakCfgs[field].clusterGapMs of the
+// previous peak in the channel, keep only the one with the larger |deviation| from baseline
+// (the cluster's actual peak). Both ingestForPeaks (online, sample-by-sample) and
+// recomputePeaks (batch over the whole buffer) feed time-ordered points here, so the
+// "previous peak" is always the most recent in time — the merge condition is correct in
+// both modes. clusterGapMs is now per-channel so each gait signal can be tuned independently.
+function pushClusteredPeak(field, point) {
+  const arr = peaks[field];
+  const last = arr.length ? arr[arr.length - 1] : null;
+  if (last && point.x - last.x <= peakCfgs[field].clusterGapMs) {
+    if (Math.abs(point.y - point.mid) > Math.abs(last.y - last.mid)) {
+      arr[arr.length - 1] = point;
+    }
+    return;
+  }
+  arr.push(point);
+}
+
 function ingestForPeaks(s) {
   if (calib.active) {
     if (calib.anchorT === null) calib.anchorT = s.t;
@@ -370,32 +439,37 @@ function ingestForPeaks(s) {
     if (s.t - calib.anchorT >= peakCfg.calibrationMs) finalizeBaseline();
     return;
   }
-  if (!peakCfg.enabled) return;
+  // Calibration still seeds *all* baselines — we just skip detection on channels whose
+  // user-level "Detect peaks" is off. That way toggling enabled mid-session doesn't force
+  // a recalibrate; flipping back on resumes detection against the same baseline.
   for (const ch of CHANNELS) {
+    const cfg = peakCfgs[ch.f];
+    if (!cfg.enabled) continue;
     const b = calib.baseline[ch.f];
     if (!b.ready) continue;
-    if (Math.abs(s[ch.f] - b.mean) > peakCfg.multiplier * b.amp) {
-      peaks[ch.f].push({ x: s.t, y: s[ch.f], mid: b.mean });
+    if (Math.abs(s[ch.f] - b.mean) > cfg.multiplier * b.amp) {
+      pushClusteredPeak(ch.f, { x: s.t, y: s[ch.f], mid: b.mean });
     }
   }
 }
 
-// Re-detect peaks across the WHOLE in-memory buffer. Called when the multiplier slider
-// changes (so the user sees the new threshold applied immediately, not from the next sample
-// onward) and after finalizeBaseline (to backfill peaks from the warmup window).
+// Re-detect peaks across the WHOLE in-memory buffer. Called when any per-channel setting
+// changes (the modal sliders are live-update) and after finalizeBaseline to backfill peaks
+// from the warmup window. Each channel uses its own multiplier + clusterGapMs.
 function recomputePeaks() {
   for (const ch of CHANNELS) peaks[ch.f].length = 0;
-  if (!peakCfg.enabled) return;
   const n = buf.t.length;
   if (!n) return;
   for (const ch of CHANNELS) {
+    const cfg = peakCfgs[ch.f];
+    if (!cfg.enabled) continue;
     const b = calib.baseline[ch.f];
     if (!b.ready) continue;
     const arr = buf[ch.f];
-    const threshold = peakCfg.multiplier * b.amp;
+    const threshold = cfg.multiplier * b.amp;
     for (let i = 0; i < n; i++) {
       if (Math.abs(arr[i] - b.mean) > threshold) {
-        peaks[ch.f].push({ x: buf.t[i], y: arr[i], mid: b.mean });
+        pushClusteredPeak(ch.f, { x: buf.t[i], y: arr[i], mid: b.mean });
       }
     }
   }
@@ -422,32 +496,13 @@ function peakStatusText() {
   return `ready · ${total} peak${total === 1 ? "" : "s"}`;
 }
 
-// Chart.js v4 core has no datalabels plugin, so we hook afterDatasetsDraw and paint value
-// labels directly. We reach into datasets[1] (the peak scatter) only — datasets[0] (the line)
-// gets no labels. Position above/below the dot is chosen from the baseline mean (pt.mid).
-const peakLabelPlugin = {
-  id: "peakLabel",
-  afterDatasetsDraw(chart) {
-    const ds = chart.data.datasets[1];
-    if (!ds || !ds.data || !ds.data.length) return;
-    const xs = chart.scales.x, ys = chart.scales.y;
-    const ctx = chart.ctx;
-    ctx.save();
-    ctx.font = "10px ui-sans-serif, system-ui, -apple-system, sans-serif";
-    ctx.fillStyle = "rgba(239,68,68,1)";
-    ctx.textAlign = "center";
-    for (const pt of ds.data) {
-      if (pt.x < xs.min || pt.x > xs.max) continue;
-      const px = xs.getPixelForValue(pt.x);
-      const py = ys.getPixelForValue(pt.y);
-      const above = pt.y >= (pt.mid ?? 0);
-      ctx.textBaseline = above ? "bottom" : "top";
-      ctx.fillText(fmt(pt.y), px, above ? py - 5 : py + 5);
-    }
-    ctx.restore();
-  },
-};
-Chart.register(peakLabelPlugin);
+// Use the official chartjs-plugin-datalabels (vendored alongside chart.umd.min.js) to draw
+// the value label above each peak marker. Register once globally; disable on every dataset
+// by default so the line trace stays clean — we opt-in per-dataset on datasets[1] inside
+// makeLineChart(). The per-dataset config lives there because the formatter and align
+// callback are tied to the {x, y, mid} point shape used by the peak scatter dataset.
+Chart.register(ChartDataLabels);
+Chart.defaults.set("plugins.datalabels", { display: false });
 
 // ---- ring buffer ops -----------------------------------------------------
 function clearBuf() {
@@ -542,10 +597,11 @@ function render() {
   const statusEl = document.querySelector("[data-peak-status]");
   const n = buf.t.length;
   if (!n) {
-    // Empty state: clear pts + peak markers + show no-data overlays.
+    // Empty state: clear pts + peak markers + Δt labels + show no-data overlays.
     for (const ch of CHANNELS) {
       charts[ch.f].data.datasets[0].data.length = 0;
       charts[ch.f].data.datasets[1].data.length = 0;
+      charts[ch.f].data.datasets[2].data.length = 0;
       charts[ch.f].update("none");
       els.val[ch.f].textContent = "—";
       els.nd[ch.f].style.display = "";
@@ -564,7 +620,17 @@ function render() {
     for (let i = 0; i < n; i++) pts[i] = { x: buf.t[i], y: arr[i] };
     chart.data.datasets[0].data = pts;
     // slice() so Chart.js sees a new reference and redraws datasets[1] under update("none").
-    chart.data.datasets[1].data = peaks[ch.f].slice();
+    const pa = peaks[ch.f];
+    chart.data.datasets[1].data = pa.slice();
+    // datasets[2] = Δt label points (midpoint between adjacent peaks). Each carries .dt in ms
+    // for the datalabels formatter. After clustering, adjacent peaks are real events, so .dt
+    // reads as an inter-event interval (cadence) rather than a sample gap.
+    const dtPts = [];
+    for (let j = 1; j < pa.length; j++) {
+      const a = pa[j - 1], b = pa[j];
+      dtPts.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, dt: b.x - a.x });
+    }
+    chart.data.datasets[2].data = dtPts;
     els.val[ch.f].textContent = fmt(arr[n - 1]);
     els.nd[ch.f].style.display = "none";
     chart.options.scales.x.min = maxT - WINDOW_MS;
@@ -726,8 +792,10 @@ function updateRecordUI(rec) {
     const isJoin = btn.classList.contains("join-item");
     const tail = (isJoin ? " join-item" : "") + (btn.classList.contains("flex-1") ? " flex-1" : "");
     if (recActive) {
-      btn.textContent = "⏹ Stop";
-      btn.className = "btn btn-sm btn-error" + tail;
+      // Blinking dot + scaling glow = "REC light is on". Render the dot as a real <span> so
+      // its blink can be animated independently of the button's breathing scale.
+      btn.innerHTML = `<span class="rec-dot" aria-hidden="true"></span>Stop`;
+      btn.className = "btn btn-sm btn-error btn-rec-active" + tail;
       btn.setAttribute("aria-label", "Stop recording");
     } else {
       btn.textContent = "⏺ Rec";
@@ -886,27 +954,95 @@ function wireRecDialog() {
   dlg.querySelector("[data-rec-cancel]")?.addEventListener("click", () => dlg.close());
 }
 
-// Wire the peak-detection controls inside the panel. Built once after buildPanel() — there's
-// only one set of these inputs (panel-local, not duplicated in the drawer).
-function wirePeakControls() {
-  for (const el of $$("[data-peak-enabled]")) {
-    el.addEventListener("change", (e) => {
-      peakCfg.enabled = e.target.checked;
-      // Disabled ⇒ wipe markers immediately. Enabled ⇒ retro-detect over the buffer so the
-      // user sees the toggle take effect without waiting for the next sample.
-      if (!peakCfg.enabled) for (const ch of CHANNELS) peaks[ch.f].length = 0;
-      else recomputePeaks();
-      render();
-    });
+// ---- per-chart settings (⚙ button + dlgChartCfg) ------------------------
+// Resolve the channel's display title (e.g. "ax (m/s²)") from CHANNELS without rebuilding it.
+function channelTitle(field) {
+  const c = CHANNELS.find((x) => x.f === field);
+  return c ? c.title : field;
+}
+
+// Reflect a channel's `visible` state to its grid cell + keep the "hidden charts" dropdown
+// in sync. Hidden cells use the HTML `hidden` attribute so the CSS grid auto-flows the
+// remaining cells into the freed slots; nothing else in the page needs to know.
+function applyChannelVisibility(field) {
+  const cell = document.querySelector(`[data-cell="${field}"]`);
+  if (cell) cell.hidden = !peakCfgs[field].visible;
+  renderHiddenChartsChip();
+}
+
+// Build the "+ N hidden ▾" dropdown that lets the user unhide a chart whose ⚙ button is no
+// longer reachable. Wrap is `hidden` when N == 0 so the row stays tidy.
+function renderHiddenChartsChip() {
+  const wrap = document.querySelector("[data-hidden-wrap]");
+  if (!wrap) return;
+  const hiddenList = CHANNELS.filter((c) => !peakCfgs[c.f].visible);
+  if (!hiddenList.length) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  const countEl = wrap.querySelector("[data-hidden-count]");
+  if (countEl) countEl.textContent = String(hiddenList.length);
+  const list = wrap.querySelector("[data-hidden-list]");
+  if (list) {
+    list.innerHTML = hiddenList.map((c) =>
+      `<li><a href="#" data-unhide="${c.f}">${c.title}</a></li>`
+    ).join("");
   }
-  for (const el of $$("[data-peak-mult]")) {
-    el.addEventListener("input", (e) => {
-      peakCfg.multiplier = parseFloat(e.target.value);
-      for (const v of $$("[data-peak-mult-val]")) v.textContent = peakCfg.multiplier.toFixed(1) + "×";
-      recomputePeaks();
-      render();
-    });
-  }
+}
+
+// Populate dlgChartCfg with the channel's current peakCfgs entry and show it. The active
+// channel is stashed on the modal-box's data-cfg-active so input handlers can route mutations.
+function openChartCfg(field) {
+  const dlg = $("dlgChartCfg");
+  if (!dlg || typeof dlg.showModal !== "function") return;
+  const cfg = peakCfgs[field];
+  if (!cfg) return;
+  const box = dlg.querySelector("[data-cfg-active]");
+  if (box) box.dataset.cfgActive = field;
+  dlg.querySelector("[data-cfg-title]").textContent = channelTitle(field);
+  dlg.querySelector("[data-cfg-enabled]").checked = cfg.enabled;
+  dlg.querySelector("[data-cfg-mult]").value = String(cfg.multiplier);
+  dlg.querySelector("[data-cfg-mult-val]").textContent = cfg.multiplier.toFixed(1) + "×";
+  dlg.querySelector("[data-cfg-gap]").value = String(cfg.clusterGapMs);
+  dlg.querySelector("[data-cfg-gap-val]").textContent = cfg.clusterGapMs + "ms";
+  dlg.querySelector("[data-cfg-visible]").checked = cfg.visible;
+  dlg.showModal();
+}
+
+// Wire the modal once at boot. Each input mutates `peakCfgs[active]` live so the chart
+// behind the modal updates without an explicit Save step — matching the existing slider UX.
+function wireChartCfgDialog() {
+  const dlg = $("dlgChartCfg");
+  if (!dlg) return;
+  const box = dlg.querySelector("[data-cfg-active]");
+  const active = () => box?.dataset.cfgActive || "";
+  dlg.querySelector("[data-cfg-enabled]")?.addEventListener("change", (e) => {
+    const f = active(); if (!f) return;
+    peakCfgs[f].enabled = e.target.checked;
+    // Toggle off ⇒ wipe just this channel's markers; toggle on ⇒ recompute across buf.
+    if (!peakCfgs[f].enabled) peaks[f].length = 0;
+    else recomputePeaks();
+    render();
+  });
+  dlg.querySelector("[data-cfg-mult]")?.addEventListener("input", (e) => {
+    const f = active(); if (!f) return;
+    peakCfgs[f].multiplier = parseFloat(e.target.value);
+    dlg.querySelector("[data-cfg-mult-val]").textContent = peakCfgs[f].multiplier.toFixed(1) + "×";
+    recomputePeaks();
+    render();
+  });
+  dlg.querySelector("[data-cfg-gap]")?.addEventListener("input", (e) => {
+    const f = active(); if (!f) return;
+    peakCfgs[f].clusterGapMs = parseInt(e.target.value, 10);
+    dlg.querySelector("[data-cfg-gap-val]").textContent = peakCfgs[f].clusterGapMs + "ms";
+    recomputePeaks();
+    render();
+  });
+  dlg.querySelector("[data-cfg-visible]")?.addEventListener("change", (e) => {
+    const f = active(); if (!f) return;
+    peakCfgs[f].visible = e.target.checked;
+    applyChannelVisibility(f);
+    // Chart cell visibility just changes layout — no need to recompute peaks.
+    render();
+  });
 }
 
 // Toggle the custom date-range row visibility based on which radio is selected.
@@ -994,6 +1130,26 @@ document.addEventListener("click", (e) => {
     selectSource(srcItem.dataset.sourceValue);
     return;
   }
+  // ⚙ per-chart settings button.
+  const cfgBtn = e.target.closest("[data-chart-cfg]");
+  if (cfgBtn) {
+    e.preventDefault();
+    openChartCfg(cfgBtn.dataset.chartCfg);
+    return;
+  }
+  // "+ N hidden ▾" dropdown item — unhide that channel.
+  const unhide = e.target.closest("[data-unhide]");
+  if (unhide) {
+    e.preventDefault();
+    const f = unhide.dataset.unhide;
+    if (peakCfgs[f]) {
+      peakCfgs[f].visible = true;
+      applyChannelVisibility(f);
+      render();
+    }
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    return;
+  }
   const t = e.target.closest("[data-action]");
   if (!t) return;
   // Buttons in dropdowns are inside <li>; the global listener works regardless.
@@ -1045,12 +1201,508 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+// ---- analysis tab (cold-path: reads InfluxDB via /api/analysis/*) -------
+// Separated from the realtime hot path: the realtime poll loops are PAUSED while the user is
+// on Analysis (saves the 100 ms /api/samples polling that would render nothing visible), and
+// re-armed on switch back. The 3 analysis charts are destroyed on tab leave so we don't leak
+// Chart.js memory on repeated switches. State is reset by clicking Refresh.
+
+const ANALYSIS = {
+  currentTab: "realtime",
+  rangeMode: "preset",            // "preset" | "custom"
+  presetSec: 600,                 // last-clicked preset duration in seconds (10 min default)
+  charts: { cadence: null, cycleHist: null, timeline: null },
+  loading: false,
+  lastReport: null,
+  lastStatus: null,               // most recent /api/status response (for the source badge)
+  deviceKey: "A",                 // selected device prefix; sent as ?device= in loadAnalysis()
+  availableDevices: ["A"],        // populated by loadAnalysisLabels(); seed = ["A"] so the
+                                  //   dropdown isn't empty before the labels probe returns
+  labelsLoaded: false,            // gate so we only fetch /api/analysis/labels once per session
+};
+
+function switchTab(name) {
+  if (ANALYSIS.currentTab === name) return;
+  ANALYSIS.currentTab = name;
+  // Toggle nav button visuals.
+  for (const b of $$('[data-tab-nav] [data-tab]')) {
+    const active = b.dataset.tab === name;
+    b.classList.toggle("btn-active", active);
+    if (active) b.setAttribute("aria-current", "page");
+    else b.removeAttribute("aria-current");
+  }
+  // Show only the matching panel.
+  for (const p of $$('[data-tab-panel]')) {
+    p.hidden = (p.dataset.tabPanel !== name);
+  }
+
+  if (name === "analysis") {
+    // Pause realtime; the live charts will just freeze on their last frame (correct: there's
+    // no "current data" to show in the background, and we don't want to keep polling for
+    // values nobody is looking at).
+    stopLoops();
+    // Probe once for available device keys so the selector has the full list.
+    if (!ANALYSIS.labelsLoaded) loadAnalysisLabels();
+    loadAnalysis();
+  } else {
+    // Re-arm realtime. Catch-up poll first so the user sees fresh data immediately, not after
+    // the next 100 ms tick.
+    destroyAnalysisCharts();
+    pollSamples();
+    pollStatus();
+    startLoops();
+  }
+}
+
+function destroyAnalysisCharts() {
+  for (const k of Object.keys(ANALYSIS.charts)) {
+    if (ANALYSIS.charts[k]) {
+      ANALYSIS.charts[k].destroy();
+      ANALYSIS.charts[k] = null;
+    }
+  }
+}
+
+async function loadAnalysis() {
+  if (ANALYSIS.loading) return;
+  ANALYSIS.loading = true;
+
+  // Show the skeleton immediately so stale numbers don't pretend to be current. The header
+  // subtitle gets a "Loading <range>…" cue at the same time.
+  const rangeLabel = presetLabel(ANALYSIS.presetSec, ANALYSIS.rangeMode);
+  renderAnalysisSkeleton(rangeLabel);
+
+  const dev = encodeURIComponent(ANALYSIS.deviceKey || "A");
+  let url;
+  if (ANALYSIS.rangeMode === "preset") {
+    url = `/analysis/latest?duration_s=${ANALYSIS.presetSec}&device=${dev}`;
+  } else {
+    const fromI = document.querySelector("[data-range-from]");
+    const toI = document.querySelector("[data-range-to]");
+    const fromIso = fromI?.value ? new Date(fromI.value).toISOString() : null;
+    const toIso = toI?.value ? new Date(toI.value).toISOString() : null;
+    if (!fromIso || !toIso) {
+      const subtitle = document.querySelector("[data-analysis-subtitle]");
+      if (subtitle) subtitle.textContent = "Custom range needs both From and To.";
+      clearChartSkeletons();
+      ANALYSIS.loading = false;
+      return;
+    }
+    url = `/analysis/window?from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}&device=${dev}`;
+  }
+
+  try {
+    // Fetch the analysis report and the live-source status concurrently. The status call is
+    // cheap (no DB hit) and we want both before painting the header — they show together.
+    const [reportRes, statusRes] = await Promise.all([
+      api(url),
+      api("/status").catch(() => null),
+    ]);
+    if (reportRes.status === 503) {
+      renderAnalysisOffline("Analysis is offline — InfluxDB unreachable on the board.");
+      return;
+    }
+    if (!reportRes.ok) {
+      const txt = await reportRes.text().catch(() => "");
+      renderAnalysisOffline(`Analysis request failed (${reportRes.status}): ${txt.slice(0, 120)}`);
+      toast("Analysis request failed");
+      return;
+    }
+    const report = await reportRes.json();
+    ANALYSIS.lastReport = report;
+    // /api/status is best-effort: if it failed, render header with a "—" badge instead of
+    // blocking the whole tab on a status-page hiccup.
+    let statusJson = null;
+    if (statusRes && statusRes.ok) {
+      try { statusJson = await statusRes.json(); } catch { /* leave null */ }
+    }
+    ANALYSIS.lastStatus = statusJson;
+    renderAnalysisHeader(report, statusJson);
+    renderAnalysis(report);
+  } catch (exc) {
+    renderAnalysisOffline(`Analysis request error: ${exc}`);
+    toast("Analysis request error");
+  } finally {
+    ANALYSIS.loading = false;
+  }
+}
+
+function renderAnalysisOffline(msg) {
+  const subtitle = document.querySelector("[data-analysis-subtitle]");
+  if (subtitle) subtitle.textContent = msg;
+  const cards = document.querySelector("[data-analysis-cards]");
+  if (cards) cards.innerHTML = "";
+  clearChartSkeletons();
+  destroyAnalysisCharts();
+}
+
+function renderAnalysis(report) {
+  const cards = document.querySelector("[data-analysis-cards]");
+  if (!cards) return;
+  const s = report.summary || {};
+
+  const em = "—";
+  const fmtNum = (v, dp = 1) => (v == null ? em : Number(v).toFixed(dp));
+  const fmtPct = (v) => (v == null ? em : Math.round(v * 100) + "%");
+
+  const cad = s.cadence_steps_per_min;
+  const cyc = s.stick_cycle_time_ms;
+  const duty = s.duty_factor;
+  const stride = s.stride_length_m;
+  const velocity = s.stride_velocity_mps;
+  const sym = s.symmetry || {};
+
+  cards.innerHTML = [
+    cardHTML("Cadence", `${fmtNum(cad?.mean, 1)}`, "steps/min",
+             cad ? `median ${fmtNum(cad.median, 1)} · CV ${fmtPct(cad.cv)}` : "no cycles in window"),
+    cardHTML("Stick cycle time", `${fmtNum(cyc?.mean, 0)}`, "ms",
+             cyc ? `median ${fmtNum(cyc.median, 0)} ms` : em),
+    cardHTML("Duty factor", `${duty == null ? em : fmtNum(duty.mean * 100, 1) + "%"}`, "planted",
+             duty ? `median ${fmtNum(duty.median * 100, 1)}%` : em),
+    cardHTML("Stride length", `${fmtNum(stride?.mean, 2)}`, "m",
+             stride ? `median ${fmtNum(stride.median, 2)} m` : em),
+    cardHTML("Stride velocity", `${fmtNum(velocity?.mean, 2)}`, "m/s",
+             velocity ? `median ${fmtNum(velocity.median, 2)} m/s` : em),
+    cardHTML("Rhythm score", `${fmtNum(sym.rhythm_score, 0)}`, "/ 100",
+             (sym.symmetry_ratio != null)
+               ? `L:R ratio ${fmtNum(sym.symmetry_ratio, 2)} · L ${fmtNum(sym.left_interval_ms_mean, 0)} ms · R ${fmtNum(sym.right_interval_ms_mean, 0)} ms`
+               : "needs ≥2 cycles"),
+  ].join("");
+
+  drawAnalysisCharts(report);
+}
+
+function cardHTML(title, value, unit, sub) {
+  return `
+    <div class="card bg-base-200 shadow-sm">
+      <div class="card-body p-3">
+        <div class="text-[11px] uppercase tracking-wider opacity-60">${title}</div>
+        <div class="flex items-baseline gap-1">
+          <div class="text-2xl font-semibold leading-none">${value}</div>
+          <div class="text-xs opacity-70">${unit}</div>
+        </div>
+        <div class="text-[11px] opacity-70">${sub}</div>
+      </div>
+    </div>
+  `;
+}
+
+// Span-adaptive tick formatter shared by the time-axis charts on the Analysis tab. Without
+// this Chart.js prints the raw epoch ms (≈1.7×10¹²) as "1,716,930,000,000" — the bug the
+// user spotted. Granularity is chosen from the visible span so a 30 s window reads as "-12s"
+// while a 24 h window reads as "21:08"; the date format kicks in past a day.
+function timeFormatter(xMin, xMax) {
+  const span = xMax - xMin;
+  if (span <= 60_000)     return (v) => `${Math.round((v - xMax) / 1000)}s`;
+  if (span <= 3_600_000)  return (v) => `${Math.round((v - xMax) / 60_000)}m`;
+  if (span <= 86_400_000) return (v) => {
+    const d = new Date(v);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  return (v) => new Date(v).toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+}
+
+function drawAnalysisCharts(report) {
+  destroyAnalysisCharts();
+  // The skeleton overlays were painted by renderAnalysisSkeleton(); drop them now that
+  // the real Chart.js instances are about to render in their place.
+  clearChartSkeletons();
+  const cycles = report.series?.cycles || [];
+  const hist = report.series?.cycle_time_histogram || { bin_edges_ms: [], counts: [] };
+  const planted = report.series?.planted_timeline || [];
+  const range = report.range || {};
+  const theme = chartTheme();
+  const opts = (xMin, xMax) => ({
+    responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+    plugins: { legend: { display: false }, tooltip: { enabled: true }, datalabels: { display: false } },
+    scales: {
+      x: { type: "linear", min: xMin, max: xMax, grid: { color: theme.grid },
+           ticks: { color: theme.tick, maxTicksLimit: 6,
+                    callback: timeFormatter(xMin, xMax) } },
+      y: { grid: { color: theme.grid }, ticks: { color: theme.tick } },
+    },
+  });
+
+  // Cadence trend: x = plant time (ms), y = instantaneous cadence (steps/min). Stable units +
+  // a clean trend line tell the same story as the cards but with eye-friendly trajectory.
+  const c1 = document.querySelector('[data-analysis-chart="cadence"]');
+  if (c1) {
+    const pts = cycles
+      .filter((c) => c.cycle_ms > 0)
+      .map((c) => ({ x: c.t_plant_ms, y: 60000 / c.cycle_ms }));
+    const xMin = pts.length ? pts[0].x : 0;
+    const xMax = pts.length ? pts[pts.length - 1].x : 1;
+    ANALYSIS.charts.cadence = new Chart(c1, {
+      type: "line",
+      data: { datasets: [{ data: pts, borderColor: "#1f6feb", borderWidth: 1.5,
+                           pointRadius: 0, tension: 0, fill: false }] },
+      options: opts(xMin, xMax),
+    });
+  }
+
+  // Cycle-time histogram: bar chart of cycle_ms distribution.
+  const c2 = document.querySelector('[data-analysis-chart="cycleHist"]');
+  if (c2) {
+    const edges = hist.bin_edges_ms || [];
+    const counts = hist.counts || [];
+    const labels = counts.map((_, i) => `${Math.round(edges[i])}–${Math.round(edges[i + 1])}`);
+    ANALYSIS.charts.cycleHist = new Chart(c2, {
+      type: "bar",
+      data: { labels, datasets: [{ data: counts, backgroundColor: "#fb8f44" }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: true }, datalabels: { display: false } },
+        scales: {
+          x: { grid: { color: theme.grid }, ticks: { color: theme.tick, maxRotation: 0 } },
+          y: { grid: { color: theme.grid }, ticks: { color: theme.tick, beginAtZero: true } },
+        },
+      },
+    });
+  }
+
+  // Planted/swing timeline: a horizontal bar (one row, y=0) with one segment per planted
+  // span. Background canvas colour = "swing"; coloured bars = "planted".
+  const c3 = document.querySelector('[data-analysis-chart="timeline"]');
+  if (c3) {
+    const t0 = range.from ? new Date(range.from).getTime() : 0;
+    const t1 = range.to ? new Date(range.to).getTime() : 0;
+    // Use bar chart with floating bars [from_ms, to_ms].
+    const bars = planted.map((p) => ({ x: [p.from_ms, p.to_ms], y: "planted" }));
+    ANALYSIS.charts.timeline = new Chart(c3, {
+      type: "bar",
+      data: { datasets: [{
+        data: bars,
+        backgroundColor: "#22c55e",
+        borderColor: "#16a34a",
+        borderWidth: 0,
+        barPercentage: 0.9,
+      }] },
+      options: {
+        indexAxis: "y",
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: true }, datalabels: { display: false } },
+        scales: {
+          x: { type: "linear", min: t0, max: t1, grid: { color: theme.grid },
+               // Same time formatter as the cadence trend — consistent reading across both
+               // time-axis charts on the page.
+               ticks: { color: theme.tick, maxTicksLimit: 8,
+                        callback: timeFormatter(t0, t1) } },
+          y: { type: "category", grid: { display: false }, ticks: { color: theme.tick } },
+        },
+      },
+    });
+  }
+}
+
+// ---- analysis: header band + loading skeleton ---------------------------
+// `renderAnalysisSkeleton` paints the eventual layout in `.skel` pulse blocks so the user
+// sees the right *shape* immediately and stale numbers from the previous range don't get
+// to pretend they're current. `renderAnalysisHeader` then writes the real title/subtitle
+// and the live-source badge on top once the fetch resolves.
+
+const PRESET_LABELS = {
+  600:   "Last 10 minutes",
+  3600:  "Last 1 hour",
+  86400: "Last 24 hours",
+};
+
+function presetLabel(sec, mode) {
+  if (mode === "custom") return "custom range";
+  return PRESET_LABELS[sec] || `${sec} s`;
+}
+
+// Build the badge that summarises the currently-streaming source (NOT what was streaming
+// during the analyzed window — the tooltip on the badge says so). Mirrors the realtime
+// tab's source-picker label so the language is consistent across tabs.
+function formatSourceBadge(source, live) {
+  if (!source || !source.kind || source.kind === "none") {
+    return { text: "— no source", cls: "badge-ghost" };
+  }
+  if (source.kind === "mock") {
+    const gait = source.gait === "altered" ? "Changed pattern" : "Normal";
+    return { text: `Mock · ${gait}`, cls: live ? "badge-success" : "badge-ghost" };
+  }
+  if (source.kind === "ble") {
+    const id = source.label || source.address || "Live Nano";
+    return { text: `Nano · ${id}`, cls: live ? "badge-success" : "badge-warning" };
+  }
+  return { text: source.kind, cls: "badge-ghost" };
+}
+
+function renderAnalysisHeader(report, statusJson) {
+  const title = document.querySelector("[data-analysis-title]");
+  const subtitle = document.querySelector("[data-analysis-subtitle]");
+  const badge = document.querySelector("[data-analysis-source]");
+  const r = report?.range || {};
+
+  if (title) {
+    const dev = r.device_key ? ` · Device ${r.device_key}` : "";
+    title.textContent = `🦯 Gait analysis${dev}`;
+  }
+  if (subtitle) {
+    const fmtRange = (x) => (x ? new Date(x).toLocaleString() : "—");
+    const warnSep = (report?.warnings || []).filter(
+      (w) => !w.includes("phase 2") && !w.includes("alternation"),
+    );
+    const warnText = warnSep.length ? ` · ${warnSep.join("; ")}` : "";
+    subtitle.textContent =
+      `${fmtRange(r.from)}  →  ${fmtRange(r.to)} ` +
+      `· ${r.duration_s || 0}s · ${r.n_samples || 0} samples ` +
+      `· swing ${report?.params?.swing_axis || "—"}${warnText}`;
+  }
+  if (badge) {
+    const source = statusJson?.source;
+    const live = !!statusJson?.source_status?.live;
+    const { text, cls } = formatSourceBadge(source, live);
+    // Reset to base classes + apply the variant so prior states (badge-success etc.) clear.
+    badge.className = `badge gap-1 shrink-0 ${cls}`;
+    badge.textContent = text;
+  }
+}
+
+// Skeleton card stub mirrors `cardHTML()` — same shell, faux bars for the inner text so
+// dimensions don't jump when real data swaps in.
+function skeletonCardHTML() {
+  return `
+    <div class="card bg-base-200 shadow-sm">
+      <div class="card-body p-3 gap-1.5">
+        <div class="skel h-3 w-24"></div>
+        <div class="flex items-baseline gap-1">
+          <div class="skel h-7 w-20"></div>
+          <div class="skel h-3 w-10"></div>
+        </div>
+        <div class="skel h-3 w-40"></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderAnalysisSkeleton(rangeLabel) {
+  // Subtitle gets a "Loading …" cue; title stays put (still says what kind of data this is).
+  const subtitle = document.querySelector("[data-analysis-subtitle]");
+  if (subtitle) subtitle.textContent = `Loading ${rangeLabel}…`;
+
+  // 6 placeholder cards in the same grid slots as the real ones.
+  const cards = document.querySelector("[data-analysis-cards]");
+  if (cards) cards.innerHTML = Array.from({ length: 6 }, skeletonCardHTML).join("");
+
+  // Chart overlays: layer a `.skel` div over each canvas's relative wrapper so the live
+  // Chart.js instance stays mounted under it (cheap; we don't destroy + recreate per click).
+  for (const wrap of document.querySelectorAll("[data-analysis-chart-wrap]")) {
+    if (wrap.querySelector("[data-analysis-skel]")) continue;  // already overlaid
+    const overlay = document.createElement("div");
+    overlay.className = "skel absolute inset-0 z-10";
+    overlay.setAttribute("data-analysis-skel", wrap.dataset.analysisChartWrap);
+    wrap.appendChild(overlay);
+  }
+}
+
+function clearChartSkeletons() {
+  for (const o of document.querySelectorAll("[data-analysis-skel]")) o.remove();
+}
+
+// Probe /api/analysis/labels once per session and fill the device-key dropdown. On 503 the
+// dropdown stays disabled with just the seeded "Device A" — same fallback semantics as the
+// rest of /api/analysis/*. We never block loadAnalysis() on this; it runs in parallel.
+async function loadAnalysisLabels() {
+  ANALYSIS.labelsLoaded = true;
+  const sel = document.querySelector("[data-analysis-device]");
+  try {
+    const r = await api("/analysis/labels");
+    if (!r.ok) {
+      if (sel) sel.disabled = true;
+      return;
+    }
+    const data = await r.json();
+    const devices = (data.devices || []).filter((d) => typeof d === "string");
+    if (!devices.length) {
+      if (sel) sel.disabled = true;
+      return;
+    }
+    ANALYSIS.availableDevices = devices;
+    // Preserve the user's current selection if it's still in the list; otherwise fall
+    // back to the server-recommended default, then to first.
+    if (!devices.includes(ANALYSIS.deviceKey)) {
+      ANALYSIS.deviceKey = data.default || devices[0];
+    }
+    if (sel) {
+      sel.innerHTML = devices
+        .map((d) => `<option value="${d}"${d === ANALYSIS.deviceKey ? " selected" : ""}>Device ${d}</option>`)
+        .join("");
+      sel.disabled = false;
+    }
+  } catch {
+    if (sel) sel.disabled = true;
+  }
+}
+
+// ---- analysis: range picker + click handlers -----------------------------
+
+document.addEventListener("click", (e) => {
+  // Tab buttons (top nav).
+  const tabBtn = e.target.closest("[data-tab]");
+  if (tabBtn) {
+    e.preventDefault();
+    switchTab(tabBtn.dataset.tab);
+    return;
+  }
+  // Range preset buttons.
+  const preset = e.target.closest("[data-range-preset]");
+  if (preset) {
+    e.preventDefault();
+    // Active state on the join group.
+    for (const b of $$('[data-range-preset]')) b.classList.toggle("btn-active", b === preset);
+    const v = preset.dataset.rangePreset;
+    const custom = document.querySelector("[data-range-custom]");
+    if (v === "custom") {
+      ANALYSIS.rangeMode = "custom";
+      if (custom) custom.classList.remove("hidden");
+      // Pre-fill with last 10 minutes so the user has a starting point to nudge.
+      const now = new Date();
+      const ago = new Date(now.getTime() - 600 * 1000);
+      const fromI = document.querySelector("[data-range-from]");
+      const toI = document.querySelector("[data-range-to]");
+      if (fromI && !fromI.value) fromI.value = toLocalDtInputSafe(ago);
+      if (toI && !toI.value) toI.value = toLocalDtInputSafe(now);
+    } else {
+      ANALYSIS.rangeMode = "preset";
+      ANALYSIS.presetSec = parseInt(v, 10);
+      if (custom) custom.classList.add("hidden");
+      loadAnalysis();
+    }
+    return;
+  }
+  // Refresh button.
+  const refresh = e.target.closest('[data-action="analysis-refresh"]');
+  if (refresh) {
+    e.preventDefault();
+    loadAnalysis();
+  }
+});
+
+// Device-key dropdown: a separate `change` handler (the click delegator above doesn't fire
+// on <select>). Re-runs loadAnalysis() with the new device picked.
+document.addEventListener("change", (e) => {
+  const sel = e.target.closest("[data-analysis-device]");
+  if (!sel) return;
+  ANALYSIS.deviceKey = sel.value;
+  loadAnalysis();
+});
+
+// Fallback datetime-local formatter when toLocalDtInput is not in scope (it's defined in the
+// CSV dialog wiring above; we keep a tiny stub here so the analysis section is self-contained).
+function toLocalDtInputSafe(d) {
+  if (typeof toLocalDtInput === "function") return toLocalDtInput(d);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // ---- boot ----------------------------------------------------------------
 buildPanel();
 renderSourceLists();
 wireCsvDialog();
 wireRecDialog();
-wirePeakControls();
+wireChartCfgDialog();
 // Arm calibration so the first samples — whether the server started with an active source
 // (STARTUP_SOURCE) or the user picks one later — establish a fresh baseline. selectSource /
 // clearBuf re-arm too, so this is idempotent.

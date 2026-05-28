@@ -114,4 +114,46 @@
   }
   .status-dot.status-live { background: var(--live); box-shadow: 0 0 0 2px color-mix(in srgb, var(--live) 25%, transparent); }
   .status-dot.status-warn { background: #d4a72c; }
+
+  /* Loading-skeleton primitive used by the Analysis tab while /api/analysis/* is in flight.
+     One class for the bar/block/overlay shapes — set width + height via Tailwind utilities
+     (`h-3 w-24` etc.) or `inset-0` for full-cover chart overlays. `--border` is a touch
+     darker than `--panel` in both themes so the bar reads on top of `bg-base-200` cards.
+     The pulse stops automatically for users who prefer reduced motion (see @media above). */
+  .skel {
+    background-color: var(--border);
+    border-radius: 0.375rem;
+    animation: skel-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes skel-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+  }
+
+  /* Active-recording button affordance. Two layers read like a video-record indicator:
+       - the button itself breathes (subtle 1.0→1.04 scale + glow ring) on a 1.2 s loop
+       - a `.rec-dot` glyph blinks 1.0→0.4 on the same beat as the camera REC light
+     The glow tint reads on both themes because `--down` is mapped to red in both.
+     `prefers-reduced-motion` zeroes the animation duration via the existing media query. */
+  .btn-rec-active {
+    animation: rec-pulse 1.2s ease-in-out infinite;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--down) 50%, transparent);
+  }
+  @keyframes rec-pulse {
+    0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0   color-mix(in srgb, var(--down) 50%, transparent); }
+    50%      { transform: scale(1.04); box-shadow: 0 0 0 6px color-mix(in srgb, var(--down) 0%,  transparent); }
+  }
+  .rec-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 9999px;
+    background: #fff;                       /* the REC light is white-hot, not red — the
+                                                button is already red, so the dot pops */
+    margin-right: 4px;
+    animation: rec-dot-blink 1.2s ease-in-out infinite;
+  }
+  @keyframes rec-dot-blink {
+    0%, 100% { opacity: 1;   }
+    50%      { opacity: 0.35;}
+  }
 }
