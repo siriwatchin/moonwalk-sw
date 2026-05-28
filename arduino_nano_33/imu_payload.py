@@ -6,8 +6,8 @@ Shared BLE contract + payload parsing for the NanoIMU prototype.
 Both ble_receiver.py (debug printer) and ble_bridge.py (WebSocket gateway)
 import from here so the UUIDs and the CSV->JSON mapping live in one place.
 
-Source CSV line (8 comma-separated fields) from nano_imu_ble_sender.ino:
-    IMU,timestamp_ms,ax_ms2,ay_ms2,az_ms2,gx_dps,gy_dps,gz_dps
+Source CSV line (9 comma-separated fields) from nano_imu_ble_sender.ino:
+    IMU,timestamp_ms,ax_ms2,ay_ms2,az_ms2,gx_dps,gy_dps,gz_dps,pressure_pa
 ---------------------------------------------------------------------------
 """
 
@@ -36,8 +36,8 @@ def parse_payload(raw: str) -> dict | None:
 
     try:
         timestamp_ms = int(parts[1])
-        # parts[2:8] = 6 accel/gyro floats.
-        f = [float(x) for x in parts[2:8]]
+        # parts[2:FIELD_COUNT] = 6 accel/gyro floats + 1 pressure float.
+        f = [float(x) for x in parts[2:FIELD_COUNT]]
     except ValueError:
         return None
 
@@ -50,6 +50,7 @@ def parse_payload(raw: str) -> dict | None:
         "timestamp_ms": timestamp_ms,
         "accel": {"x": f[0], "y": f[1], "z": f[2]},   # m/s^2
         "gyro": {"x": f[3], "y": f[4], "z": f[5]},     # deg/s
+        "pressure": f[6],                              # Pa (BME680)
     }
 
 
@@ -59,5 +60,6 @@ def format_human(sample: dict) -> str:
     return (
         f"t={sample['timestamp_ms']} "
         f"acc=({a['x']:.3f},{a['y']:.3f},{a['z']:.3f}) "
-        f"gyro=({g['x']:.3f},{g['y']:.3f},{g['z']:.3f})"
+        f"gyro=({g['x']:.3f},{g['y']:.3f},{g['z']:.3f}) "
+        f"p={sample['pressure']:.1f}Pa"
     )

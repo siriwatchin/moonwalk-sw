@@ -8,5 +8,5 @@ SEND_INTERVAL_MS = 50
 GRAVITY = 9.80665
 PAYLOAD_TAG = "IMU"
 
-FIELDS = ["timestamp_ms", "ax", "ay", "az", "gx", "gy", "gz"]
+FIELDS = ["timestamp_ms", "ax", "ay", "az", "gx", "gy", "gz", "pressure"]
 FIELD_COUNT = len(FIELDS) + 1  # +1 for the leading payload tag

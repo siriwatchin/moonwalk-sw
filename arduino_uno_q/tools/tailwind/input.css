@@ -38,4 +38,65 @@
     --chart-tick: #6e7681;
     --chart-baseline: #30363d;
   }
+
+  /* a11y: a clear keyboard-focus ring on every interactive element (mouse clicks unaffected,
+     thanks to :focus-visible). Without this the only focus signal is the browser default,
+     which the custom button styling tends to wash out. */
+  :focus-visible {
+    outline: 2px solid var(--live);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* a11y: honour reduced-motion. Chart.js already runs with animation:false; this covers the
+     toast/UI transitions below. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Transient error toasts, bottom-right, newest on top. Separate from the #srcHint status line
+     so a failed POST is never silently overwritten by routine status text. */
+  .toast-stack {
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    z-index: 50;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.5rem;
+    max-width: min(90vw, 24rem);
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    background: var(--down);
+    color: #fff;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 12px;
+    line-height: 1.3;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    animation: toast-in 0.15s ease-out;
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* "no data yet" overlay centred over an empty chart canvas. */
+  .no-data {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: var(--faint);
+    pointer-events: none;
+  }
 }

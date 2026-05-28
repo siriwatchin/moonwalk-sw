@@ -80,11 +80,14 @@ class MockNanoSource:
         gx = r.gauss(state.gyro_mean, state.gyro_std)
         gy = r.gauss(state.gyro_mean * 0.4, state.gyro_std)
         gz = r.gauss(state.gyro_mean * 0.2, state.gyro_std)
+        # BME680 pressure (Pa): slow-drifting around sea-level standard, small noise.
+        pressure = r.gauss(101325.0, 15.0)
 
         line = (
             f"{PAYLOAD_TAG},{self._t_ms},"
             f"{ax:.4f},{ay:.4f},{az:.4f},"
-            f"{gx:.4f},{gy:.4f},{gz:.4f}"
+            f"{gx:.4f},{gy:.4f},{gz:.4f},"
+            f"{pressure:.1f}"
         )
         self._t_ms += INTERVAL_MS
         return line

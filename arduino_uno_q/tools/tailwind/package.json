@@ -1,0 +1,9 @@
+{
+  "name": "moonwalk-tailwind",
+  "private": true,
+  "description": "Build the vendored, offline assets/tailwind.css (Tailwind v3 + daisyUI plugin). Dev-only; runtime is the compiled CSS file in assets/.",
+  "devDependencies": {
+    "tailwindcss": "3.4.17",
+    "daisyui": "4.12.14"
+  }
+}

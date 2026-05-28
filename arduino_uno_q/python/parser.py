@@ -18,14 +18,15 @@ def parse_line(raw: str) -> ImuSample | None:
         return None
 
     try:
-        floats = [float(parts[i]) for i in range(2, 8)]
+        floats = [float(parts[i]) for i in range(2, FIELD_COUNT)]
         if not all(math.isfinite(v) for v in floats):
             return None        # NaN / inf — sensor glitch or corrupt line
-        ax, ay, az, gx, gy, gz = floats
+        ax, ay, az, gx, gy, gz, pressure = floats
         return ImuSample(
             timestamp_ms=int(parts[1]),
             ax=ax, ay=ay, az=az,
             gx=gx, gy=gy, gz=gz,
+            pressure=pressure,
         )
     except ValueError:
         return None

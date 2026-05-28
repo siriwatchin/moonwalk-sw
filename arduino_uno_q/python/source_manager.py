@@ -1,10 +1,10 @@
-"""SourceManager — two fixed compare slots (A / B), each independently configurable.
+"""SourceManager — one active source for the realtime dashboard.
 
-The dashboard compares exactly two subjects side-by-side. There are two fixed slots, "A"
-and "B"; each slot binds to one source — `none`, a mock gait (normal / injured), or a live
-BLE Nano picked from a scan. Slots are independent, so you can mix freely (e.g. slot A a mock
-'normal' baseline, slot B a real Nano). Setting a slot tears down whatever it held and starts
-the new source under the slot's key, so the device registry only ever holds keys "A"/"B".
+The dashboard shows exactly ONE active source at a time: `none`, a mock gait
+(normal / changed-pattern), or a live BLE Nano picked from a scan. Setting the source tears
+down whatever was running and starts the new one. Internally it is stored under a single fixed
+registry key (`ACTIVE`); the DeviceRegistry/SampleStore machinery is reused as-is, just with one
+device. (An earlier version compared two fixed slots A/B; that was removed.)
 
 Source objects (MockNanoSource / BleNanoReceiver) implement: lines(), status(), stop().
 """
@@ -17,9 +17,11 @@ from parser import parse_line
 
 import config
 from config import DEVICE_NAME
+from recorder import Recorder
 from registry import DeviceRegistry
 
-SLOTS = ("A", "B")
+# Single internal storage key for the one active source (the registry/store stay generic).
+ACTIVE = "A"
 
 _logged: set[str] = set()
 
@@ -52,43 +54,42 @@ class SourceManager:
         self._tsstore = tsstore
         self._lock = threading.Lock()
         self._scan_devices: list[dict] = []
-        self._slots: dict[str, dict] = {s: _empty_slot() for s in SLOTS}
+        self._source: dict = _empty_slot()    # the one active source's config
+        self.recorder = Recorder()   # single start→stop session recorder (fed by _run)
 
-    # ---- configuring a slot --------------------------------------------
-    def set_slot(self, slot: str, kind: str = "none", gait: str = "normal",
-                 address: str | None = None, label: str | None = None) -> dict:
-        """Bind a fixed slot ("A"/"B") to a source. kind: 'none'|'mock'|'ble'.
+    # ---- configuring the active source ---------------------------------
+    def set_source(self, kind: str = "none", gait: str = "normal",
+                   address: str | None = None, label: str | None = None) -> dict:
+        """Set the one active source. kind: 'none'|'mock'|'ble'.
 
-        Replaces whatever the slot held (the worker for that key is torn down first).
+        Replaces whatever was running (the ingest worker is torn down first).
         """
-        if slot not in SLOTS:
-            print(f"[source] set_slot ignored: unknown slot {slot!r}", flush=True)
-            return self.state()
+        # Changing the source mid-recording would mix data from two sources — finalize first.
+        if self.recorder.state()["active"]:
+            self.recorder.stop()
+            print("[source] source changed — recording stopped", flush=True)
         with self._lock:
-            self._remove_locked(slot)
+            self._remove_locked(ACTIVE)
             if kind == "mock":
-                lbl = label or ("injured" if gait == "altered" else gait)
-                self._add_locked("mock", key=slot, label=lbl, gait=gait)
-                self._slots[slot] = {"kind": "mock", "gait": gait,
-                                     "address": None, "label": lbl}
-                print(f"[source] slot {slot} = mock {gait}", flush=True)
+                lbl = label or ("changed pattern" if gait == "altered" else gait)
+                self._add_locked("mock", key=ACTIVE, label=lbl, gait=gait)
+                self._source = {"kind": "mock", "gait": gait, "address": None, "label": lbl}
+                print(f"[source] active = mock {gait}", flush=True)
             elif kind == "ble":
                 # address=None -> connect to the first NanoIMU by advertised name.
                 lbl = label or _ble_label(address)
-                self._add_locked("ble", key=slot, label=lbl, address=address)
-                self._slots[slot] = {"kind": "ble", "gait": None,
-                                     "address": address, "label": lbl}
-                print(f"[source] slot {slot} = ble {address or DEVICE_NAME}", flush=True)
+                self._add_locked("ble", key=ACTIVE, label=lbl, address=address)
+                self._source = {"kind": "ble", "gait": None, "address": address, "label": lbl}
+                print(f"[source] active = ble {address or DEVICE_NAME}", flush=True)
             else:
-                self._slots[slot] = _empty_slot()
-                print(f"[source] slot {slot} = none", flush=True)
+                self._source = _empty_slot()
+                print("[source] active = none", flush=True)
         return self.state()
 
     def reset(self) -> dict:
-        """Re-seed the default demo pair: slot A = normal, slot B = injured."""
-        self.set_slot("A", "mock", gait="normal")
-        self.set_slot("B", "mock", gait="altered")
-        print("[source] reset to demo pair", flush=True)
+        """Reset to the demo source: a single mock 'normal' gait."""
+        self.set_source("mock", gait="normal")
+        print("[source] reset to demo source", flush=True)
         return self.state()
 
     # ---- BLE scan -------------------------------------------------------
@@ -174,6 +175,7 @@ class SourceManager:
                 dev.store.note_bad()
                 continue
             dev.store.append(sample)
+            self.recorder.record(key, sample)             # session capture (no-op unless recording this slot)
             try:
                 tsstore.enqueue(sample, device_key=key)   # batched DB write (cold path)
             except Exception as exc:
@@ -185,13 +187,30 @@ class SourceManager:
                 print(f"[ingest:{key}] good={st['count']} bad={st['bad']} "
                       f"rate={st['rate_hz']}Hz status={st['source_status']}", flush=True)
 
+    # ---- recording (single start→stop session, fed by _run) ------------
+    def record_start(self, label: str) -> dict:
+        """Start recording the active source (start→stop session)."""
+        self.recorder.start(ACTIVE, label)
+        print(f"[record] start label={label!r}", flush=True)
+        return self.state()
+
+    def record_stop(self) -> dict:
+        st = self.recorder.stop()
+        print(f"[record] stop — {st['count']} samples (label={st['label']!r})", flush=True)
+        return self.state()
+
+    def record_csv(self) -> str:
+        return self.recorder.to_csv()
+
+    def record_filename(self) -> str:
+        return self.recorder.download_filename()
+
     # ---- introspection --------------------------------------------------
     def state(self) -> dict:
-        statuses = {d.key: d.store.status()["source_status"] for d in self._reg.devices()}
+        dev = self._reg.get(ACTIVE)
+        status = dev.store.status()["source_status"] if dev else "none"
         return {
             "scan_devices": self._scan_devices,
-            "slots": {
-                s: {**self._slots[s], "status": statuses.get(s, "none")}
-                for s in SLOTS
-            },
+            "source": {**self._source, "status": status},
+            "recording": self.recorder.state(),
         }

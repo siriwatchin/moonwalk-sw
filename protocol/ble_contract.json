@@ -9,6 +9,7 @@
   "fields": [
     "timestamp_ms",
     "ax", "ay", "az",
-    "gx", "gy", "gz"
+    "gx", "gy", "gz",
+    "pressure"
   ]
 }

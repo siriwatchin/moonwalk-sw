@@ -4,13 +4,13 @@ The BLE contract (device name + UUIDs + payload) must match the Nano firmware
 (arduino_nano_33/nano_imu_ble_sender.ino).
 
 Runtime mode is chosen here (APP_MODE), not via CLI flags: in App Lab the app is launched by
-the Run button, which passes no arguments. Edit APP_MODE / STARTUP_SLOTS / BLE_TRANSPORT and
+the Run button, which passes no arguments. Edit APP_MODE / STARTUP_SOURCE / BLE_TRANSPORT and
 re-run; `python python/main.py` is all that's needed.
 """
 
 # ---- Runtime mode (hardcoded; replaces CLI flags) ----------------------
-# "dashboard" = start the WebUI dashboard and apply STARTUP_SLOTS   (runs in the App Lab container)
-# "empty"     = start the dashboard with both slots unbound         (runs in the container)
+# "dashboard" = start the WebUI dashboard and apply STARTUP_SOURCE  (runs in the App Lab container)
+# "empty"     = start the dashboard with no active source           (runs in the container)
 # "scan"      = list nearby BLE devices and exit; no bricks imported (run on the HOST over SSH)
 # "debug"     = connect to the Nano and print parsed samples; no bricks (run on the HOST over SSH)
 APP_MODE = "dashboard"
@@ -58,10 +58,18 @@ from ble_contract import SEND_INTERVAL_MS as INTERVAL_MS  # noqa: E402,F401
 BLE_STALL_TIMEOUT_S = 3.0
 
 # ---- Store / UI ---------------------------------------------------------
-BUFFER_MAXLEN = 600     # ~30 s of history at 20 Hz
-RECENT_POINTS = 200     # samples returned to the browser for charts (~10 s @ 20 Hz)
+BUFFER_MAXLEN = 2400    # ~2 min of history at 20 Hz — sized so a backgrounded browser tab
+                        # (where setInterval gets throttled to ~1 Hz) can recover on return
+                        # without falling outside the buffer and triggering an /api/samples reset.
+RECENT_POINTS = 200     # default samples per /api/samples response (~10 s @ 20 Hz)
+SAMPLES_LIMIT_MAX = 1000  # server-side hard cap on /api/samples ?limit (guards huge responses)
 CHART_WINDOW_MS = 10000 # live chart x-axis span: a 10 s scrolling time window
 UI_PORT = 7000          # Arduino App Lab WebUI default port (informational)
+
+# ---- Record feature -----------------------------------------------------
+# A start→stop session recording accumulates in memory; this caps it so a forgotten recording
+# can't grow unbounded. 72000 ≈ 60 min at 20 Hz (~5 MB CSV). Hitting it auto-stops the recording.
+RECORD_MAX_SAMPLES = 72000
 
 # ---- TimeSeriesStore batching (cold path; analysis/history, not the live view) ----
 # DB writes are decoupled from ingest: the ingest loop only enqueues, a background thread
@@ -69,20 +77,15 @@ UI_PORT = 7000          # Arduino App Lab WebUI default port (informational)
 TS_FLUSH_INTERVAL_S = 1.0   # flush cadence (also bounds DB-timestamp skew to ~this)
 TS_BATCH_MAX = 256          # flush early once this many samples are queued
 
-# ---- Startup slot bindings (headless boot; mirrors SourceManager.set_slot args) ----
-# run_dashboard() applies these at boot when APP_MODE == "dashboard" (skipped for "empty");
-# the UI can still override a slot at runtime.
+# ---- Startup source (headless boot; mirrors SourceManager.set_source args) ----
+# run_dashboard() applies this at boot when APP_MODE == "dashboard" (skipped for "empty");
+# the UI can still change the active source at runtime. The dashboard shows ONE active source.
 # kind: "none" | "mock" | "ble"  (case-sensitive)
 #   mock -> set "gait": "normal" | "altered"
-#   ble  -> with BLE_TRANSPORT="bridge" the slot reads the host bridge (BRIDGE_HOST:BRIDGE_PORT);
+#   ble  -> with BLE_TRANSPORT="bridge" the source reads the host bridge (BRIDGE_HOST:BRIDGE_PORT);
 #           "address" is only used when BLE_TRANSPORT="direct". Find a MAC with a host-side scan
 #           (APP_MODE="scan", run over SSH), or omit/None for the first NanoIMU by name.
-STARTUP_SLOTS = {
-    "A": {"kind": "mock", "gait": "normal"},
-    "B": {"kind": "mock", "gait": "altered"},
-}
-# Live example — mock baseline in A, real Nano (via the host bridge) in B:
-# STARTUP_SLOTS = {
-#     "A": {"kind": "mock", "gait": "normal"},
-#     "B": {"kind": "ble"},   # BLE_TRANSPORT="bridge" -> reads ble_bridge.py on the host
-# }
+# Default: none — boot empty and pick a source from the UI dropdown (Reset = mock normal demo).
+STARTUP_SOURCE = {"kind": "none"}
+# Live example — boot straight onto the real Nano via the host bridge:
+# STARTUP_SOURCE = {"kind": "ble"}    # BLE_TRANSPORT="bridge" -> reads ble_bridge.py on the host

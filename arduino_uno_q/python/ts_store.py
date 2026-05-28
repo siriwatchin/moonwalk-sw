@@ -1,6 +1,6 @@
 """TimeSeriesStore Brick layer — persists samples to the App Lab time-series DB in batches.
 
-Writes each IMU sample as 9 separate time-series metrics via the brick:
+Writes each IMU sample as 7 separate time-series metrics via the brick:
     from arduino.app_bricks.dbstorage_tsstore import TimeSeriesStore
     db = TimeSeriesStore(); db.start()
     db.write_sample(metric_name, value)
@@ -31,6 +31,7 @@ from models import ImuSample
 _METRIC_MAP = {
     "ax": "ax_ms2", "ay": "ay_ms2", "az": "az_ms2",
     "gx": "gx_dps", "gy": "gy_dps", "gz": "gz_dps",
+    "pressure": "pressure_pa",
 }
 
 _QUEUE_CAP = TS_BATCH_MAX * 8   # drop-guard if the DB stalls (live view is unaffected)
@@ -90,7 +91,7 @@ class TsStore:
             self._write_batch(batch)
 
     def _write_batch(self, batch: list[tuple[str | None, ImuSample]]) -> None:
-        """Write a batch of samples to the brick (9 metrics each). One flush = one batch.
+        """Write a batch of samples to the brick (7 metrics each). One flush = one batch.
 
         TODO(brick): if a bulk write_points / explicit-timestamp API is confirmed on hardware,
         swap it in here; the rest of the pipeline is unaffected.

@@ -21,12 +21,14 @@ class ImuSample:
     gx: float
     gy: float
     gz: float
+    pressure: float   # BME680 barometric pressure, Pa
 
     def to_dict(self) -> dict:
         return {
             "timestamp_ms": self.timestamp_ms,
             "ax": self.ax, "ay": self.ay, "az": self.az,
             "gx": self.gx, "gy": self.gy, "gz": self.gz,
+            "pressure": self.pressure,
         }
 
 

@@ -4,8 +4,8 @@ App Lab launches this with its Run button and passes no arguments, so the mode i
 constant. Just run `python python/main.py`; change behaviour by editing config.py.
 
 config.APP_MODE:
-    "dashboard" -> start the WebUI + TimeSeriesStore dashboard and apply config.STARTUP_SLOTS.
-    "empty"     -> start the dashboard with both slots unbound (add sources from the UI).
+    "dashboard" -> start the WebUI + TimeSeriesStore dashboard and apply config.STARTUP_SOURCE.
+    "empty"     -> start the dashboard with no active source (pick one from the UI).
     "scan"      -> list nearby BLE devices and exit. No bricks imported.
     "debug"     -> connect to the Nano and print every parsed sample + Hz. No bricks imported.
 
@@ -139,7 +139,8 @@ async def debug_stream(device, seconds: float | None) -> None:
             stats["win_good"] += 1
             _dbg(f"OK   ts={sample.timestamp_ms} "
                  f"ax={sample.ax:+.3f} ay={sample.ay:+.3f} az={sample.az:+.3f} "
-                 f"gx={sample.gx:+.2f} gy={sample.gy:+.2f} gz={sample.gz:+.2f}")
+                 f"gx={sample.gx:+.2f} gy={sample.gy:+.2f} gz={sample.gz:+.2f} "
+                 f"p={sample.pressure:.1f}")
 
         now = time.monotonic()
         elapsed = now - stats["last_report"]
@@ -211,7 +212,7 @@ def run_dashboard(empty: bool) -> None:
     The brick imports stay deferred to here so `scan`/`debug` modes — and any off-device
     `import main` — never pull in the App-Lab-only bricks.
     """
-    from config import BUFFER_MAXLEN, STARTUP_SLOTS, UI_PORT
+    from config import BUFFER_MAXLEN, STARTUP_SOURCE, UI_PORT
     from registry import DeviceRegistry
 
     registry = DeviceRegistry(maxlen=BUFFER_MAXLEN)
@@ -220,21 +221,21 @@ def run_dashboard(empty: bool) -> None:
     from ts_store import TsStore
     tsstore = TsStore()
 
-    # SourceManager owns the concurrent per-slot sources + ingest workers.
+    # SourceManager owns the one active source + its ingest worker.
     from source_manager import SourceManager
     mgr = SourceManager(registry, tsstore)
     if not empty:
-        for slot, cfg in STARTUP_SLOTS.items():
-            mgr.set_slot(slot, cfg.get("kind", "none"),
-                         gait=cfg.get("gait", "normal"),
-                         address=cfg.get("address"), label=cfg.get("label"))
+        mgr.set_source(STARTUP_SOURCE.get("kind", "none"),
+                       gait=STARTUP_SOURCE.get("gait", "normal"),
+                       address=STARTUP_SOURCE.get("address"),
+                       label=STARTUP_SOURCE.get("label"))
 
     # WebUI Brick: register the /api/* routes (read + control).
     from webui_server import WebUIServer
     _server = WebUIServer(registry, mgr)  # noqa: F841
 
     print(f"UNO Q IMU dashboard starting (port={UI_PORT}, "
-          f"{'empty' if empty else 'STARTUP_SLOTS'})", flush=True)
+          f"{'empty' if empty else 'STARTUP_SOURCE'})", flush=True)
     from arduino.app_utils import App
     try:
         App.run()         # starts all bricks (WebUI + TimeSeriesStore) and blocks
