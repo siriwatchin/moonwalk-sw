@@ -11,11 +11,13 @@
     "@user-interface/env": "workspace:*",
     "@user-interface/ui": "workspace:*",
     "babel-plugin-react-compiler": "^1.0.0",
+    "chart.js": "^4.5.1",
     "dotenv": "catalog:",
     "lucide-react": "catalog:",
     "next": "^16.2.0",
     "next-themes": "catalog:",
     "react": "catalog:",
+    "react-chartjs-2": "^5.3.1",
     "react-dom": "catalog:",
     "sonner": "catalog:",
     "zod": "catalog:"

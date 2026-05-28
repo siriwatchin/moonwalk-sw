@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const nextConfig: NextConfig = {
   typedRoutes: true,
   reactCompiler: true,
+  devIndicators: false,
   turbopack: {
     root: fileURLToPath(new URL("../..", import.meta.url)),
   },

@@ -11,8 +11,19 @@ import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import * as React from "react";
 
+import { useMounted } from "@/hooks/use-mounted";
+
 export function ModeToggle() {
+  const isMounted = useMounted();
   const { setTheme } = useTheme();
+
+  if (!isMounted) {
+    return (
+      <Button variant="outline" size="icon" aria-label="Toggle theme">
+        <Sun className="h-[1.2rem] w-[1.2rem]" />
+      </Button>
+    );
+  }
 
   return (
     <DropdownMenu>

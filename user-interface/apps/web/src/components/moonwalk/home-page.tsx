@@ -8,7 +8,13 @@ import {
 } from "@/components/moonwalk-data";
 import { GridPanel, MiniStatus } from "@/components/moonwalk/panel";
 
-export function HomePage({ selectedDevice }: { selectedDevice: DeviceId }) {
+export function HomePage({
+  selectedDevice,
+  isBluetoothConnected,
+}: {
+  selectedDevice: DeviceId;
+  isBluetoothConnected: boolean;
+}) {
   const deviceLabel =
     devices.find((device) => device.id === selectedDevice)?.label ?? "ไม้เท้า";
 
@@ -39,7 +45,11 @@ export function HomePage({ selectedDevice }: { selectedDevice: DeviceId }) {
       </GridPanel>
 
       <div className="grid grid-cols-2 gap-3">
-        <MiniStatus label="Bluetooth" value="เชื่อมต่อ" tone="green" />
+        <MiniStatus
+          label="Bluetooth"
+          value={isBluetoothConnected ? "เชื่อมต่อ" : "ยังไม่เชื่อมต่อ"}
+          tone={isBluetoothConnected ? "green" : "neutral"}
+        />
         <MiniStatus label="Calibration" value="พร้อมใช้" tone="green" />
       </div>
 

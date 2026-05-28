@@ -16,7 +16,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="th" suppressHydrationWarning>
-      <body className="font-line-seed-th antialiased">
+      <body className="font-line-seed-th antialiased" suppressHydrationWarning>
         <Providers>
           <div className="grid grid-rows-[auto_1fr] h-svh">
             <Header />

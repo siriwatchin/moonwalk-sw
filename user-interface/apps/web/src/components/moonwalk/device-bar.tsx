@@ -5,11 +5,74 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Loader2,
   Plus,
+  Unplug,
 } from "lucide-react";
 
 import { devices, type DeviceId } from "@/components/moonwalk-data";
+import type {
+  BluetoothConnectionState,
+  BluetoothDeviceSnapshot,
+} from "@/hooks/use-bluetooth-device";
 import { cn } from "@user-interface/ui/lib/utils";
+
+function getBluetoothCopy(
+  state: BluetoothConnectionState,
+  device: BluetoothDeviceSnapshot | null,
+) {
+  if (state === "connected") {
+    return {
+      label: "Bluetooth connected",
+      detail: device?.name ?? "อุปกรณ์เชื่อมต่อแล้ว",
+      action: "ตัดการเชื่อมต่อ",
+      live: "LIVE",
+    };
+  }
+
+  if (state === "searching") {
+    return {
+      label: "กำลังค้นหาอุปกรณ์",
+      detail: "เลือกอุปกรณ์ Bluetooth จากหน้าต่างของเบราว์เซอร์",
+      action: "กำลังค้นหา",
+      live: "SCAN",
+    };
+  }
+
+  if (state === "connecting") {
+    return {
+      label: "กำลังเชื่อมต่อ",
+      detail: device?.name ?? "กำลังเปิด GATT connection",
+      action: "กำลังเชื่อมต่อ",
+      live: "PAIR",
+    };
+  }
+
+  if (state === "unsupported") {
+    return {
+      label: "Bluetooth ไม่พร้อมใช้งาน",
+      detail: "ต้องใช้ Chrome/Edge บน HTTPS หรือ localhost",
+      action: "ไม่รองรับ",
+      live: "OFF",
+    };
+  }
+
+  if (state === "error") {
+    return {
+      label: "Bluetooth เชื่อมต่อไม่สำเร็จ",
+      detail: "แตะเพื่อค้นหาและลองเชื่อมต่อใหม่",
+      action: "ลองใหม่",
+      live: "ERR",
+    };
+  }
+
+  return {
+    label: "Bluetooth ยังไม่เชื่อมต่อ",
+    detail: "แตะค้นหาเพื่อเลือกอุปกรณ์จากเว็บไซต์",
+    action: "ค้นหาอุปกรณ์",
+    live: "OFF",
+  };
+}
 
 export function StickyDeviceBar({
   selectedDevice,
@@ -17,33 +80,68 @@ export function StickyDeviceBar({
   isOpen,
   onToggleOpen,
   onAddDevice,
+  bluetoothDevice,
+  bluetoothError,
+  bluetoothState,
+  isBluetoothPending,
+  onBluetoothConnect,
+  onBluetoothDisconnect,
 }: {
   selectedDevice: DeviceId;
   onDeviceChange: (device: DeviceId) => void;
   isOpen: boolean;
   onToggleOpen: () => void;
   onAddDevice: () => void;
+  bluetoothDevice: BluetoothDeviceSnapshot | null;
+  bluetoothError: string | null;
+  bluetoothState: BluetoothConnectionState;
+  isBluetoothPending: boolean;
+  onBluetoothConnect: () => void;
+  onBluetoothDisconnect: () => void;
 }) {
   const selected =
     devices.find((device) => device.id === selectedDevice) ?? devices[0];
+  const bluetoothCopy = getBluetoothCopy(bluetoothState, bluetoothDevice);
+  const isBluetoothConnected = bluetoothState === "connected";
+  const canUseBluetooth = bluetoothState !== "unsupported";
 
   return (
     <section className="sticky top-0 z-10 -mx-3 border-y border-moonwalk-navy bg-moonwalk-white text-moonwalk-navy dark:border-moonwalk-white dark:bg-moonwalk-navy dark:text-moonwalk-white md:mx-0 md:border-x">
-      <div className="grid grid-cols-[1fr_auto] items-center border-b border-moonwalk-white bg-moonwalk-navy px-3 py-1.5 text-moonwalk-white">
+      <div className="grid grid-cols-[1fr_auto] items-center gap-2 border-b border-moonwalk-white bg-moonwalk-navy px-3 py-1.5 text-moonwalk-white">
         <div className="flex min-w-0 items-center gap-2">
           <Bluetooth
-            className="size-4 shrink-0 text-moonwalk-teal"
+            className={cn(
+              "size-4 shrink-0",
+              isBluetoothConnected ? "text-moonwalk-teal" : "text-moonwalk-white",
+            )}
             aria-hidden="true"
           />
           <div className="min-w-0">
             <p className="truncate text-base font-bold leading-none">
-              Bluetooth connected
+              {bluetoothCopy.label}
+            </p>
+            <p className="mt-0.5 truncate text-[11px] leading-none text-moonwalk-silver">
+              {bluetoothError ?? bluetoothCopy.detail}
             </p>
           </div>
         </div>
-        <div className="border border-moonwalk-white px-2 py-0.5 text-xs font-bold text-moonwalk-white">
-          LIVE
-        </div>
+        <button
+          type="button"
+          className="grid min-h-9 grid-cols-[auto_auto] items-center gap-1 border border-moonwalk-white px-2 text-xs font-bold text-moonwalk-white disabled:opacity-50"
+          onClick={
+            isBluetoothConnected ? onBluetoothDisconnect : onBluetoothConnect
+          }
+          disabled={!canUseBluetooth || isBluetoothPending}
+        >
+          {isBluetoothPending ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+          ) : isBluetoothConnected ? (
+            <Unplug className="size-3.5" aria-hidden="true" />
+          ) : (
+            <Bluetooth className="size-3.5" aria-hidden="true" />
+          )}
+          <span>{isBluetoothPending ? bluetoothCopy.live : bluetoothCopy.action}</span>
+        </button>
       </div>
 
       <button
@@ -56,7 +154,7 @@ export function StickyDeviceBar({
           <img
             src={selected.iconSrc}
             alt=""
-            className="h-8 w-8 object-contain"
+            className="h-8 w-8 object-contain dark:brightness-0 dark:invert"
           />
         </div>
         <div className="min-w-0">
@@ -94,7 +192,7 @@ export function StickyDeviceBar({
                   <img
                     src={device.iconSrc}
                     alt=""
-                    className="h-11 w-11 object-contain"
+                    className="h-11 w-11 object-contain dark:brightness-0 dark:invert"
                   />
                 </div>
                 <div className="min-w-0">
