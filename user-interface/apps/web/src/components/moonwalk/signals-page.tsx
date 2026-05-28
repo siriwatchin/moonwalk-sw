@@ -29,6 +29,7 @@ type StreamSignal = {
 };
 
 const visibleSampleCount = 100;
+const sampleIntervalMs = 50;
 
 const streamMeta = {
   ax: { column: 2, group: "ACC", axis: "X", field: "ax_ms2", scale: 12 },
@@ -41,8 +42,8 @@ const streamMeta = {
 
 function normalizeSample(height: number, index: number) {
   const centered = (height - 50) / 25;
-  const drift = Math.sin(index * 0.8) * 0.18;
-  return Number((centered + drift).toFixed(2));
+  const detail = Math.sin(index * 2.3) * 0.22 + Math.cos(index * 3.7) * 0.12;
+  return Number((centered + detail).toFixed(2));
 }
 
 function createInitialStream(): StreamSignal[] {
@@ -94,7 +95,7 @@ function formatTimestamp(timestampMs: number | undefined) {
 }
 
 function normalizePlotValue(value: number, scale: number) {
-  return Number(Math.max(-1, Math.min(1, value / scale)).toFixed(3));
+  return Number(Math.max(-1, Math.min(1, value / scale)).toFixed(4));
 }
 
 function normalizePlotSamples(samples: number[], scale: number) {
@@ -124,11 +125,12 @@ function SignalRow({
       {
         data: normalizedSamples,
         borderColor: "#41c3c0",
-        backgroundColor: "rgba(65, 195, 192, 0.12)",
-        borderWidth: 1.8,
-        fill: true,
-        pointRadius: 0,
-        tension: 0.35,
+        backgroundColor: "#41c3c0",
+        borderWidth: 1.15,
+        fill: false,
+        pointRadius: 0.75,
+        pointHoverRadius: 0,
+        tension: 0,
       },
     ],
   };
@@ -146,7 +148,7 @@ function SignalRow({
           <p className="text-[10px] font-bold uppercase leading-none text-moonwalk-slate/70 dark:text-moonwalk-white/60">
             col {meta.column}
           </p>
-          <p className="mt-1 truncate text-sm font-bold uppercase leading-none">
+          <p className="mt-1 truncate text-xs font-bold uppercase leading-none">
             {signal.label}
           </p>
         </div>
@@ -155,7 +157,7 @@ function SignalRow({
         <p className="text-[10px] font-bold uppercase leading-none text-moonwalk-slate/70 dark:text-moonwalk-white/60">
           {meta.group} {meta.axis}
         </p>
-        <p className="mt-1 text-[15px] font-bold leading-none tabular-nums">
+        <p className="mt-1 text-[12px] font-bold leading-none tabular-nums">
           {signal.value.toFixed(2)}
         </p>
         <p className="mt-0.5 text-[9px] leading-none text-moonwalk-slate/70 dark:text-moonwalk-white/60">
@@ -204,14 +206,17 @@ export function SignalsPage({
       setTick((value) => value + 1);
       setStream((current) =>
         current.map((signal, signalIndex) => {
-          const previous = signal.samples.at(-1) ?? 0;
-          const wave = Math.sin(Date.now() / 360 + signalIndex * 0.9) * 0.2;
-          const jitter = (Math.random() - 0.5) * 0.14;
+          const now = Date.now() / sampleIntervalMs;
+          const base =
+            Math.sin(now * 0.42 + signalIndex * 0.9) * (signalIndex < 3 ? 2.4 : 58);
+          const detail =
+            Math.sin(now * 2.8 + signalIndex * 1.7) * (signalIndex < 3 ? 0.8 : 22);
+          const micro =
+            Math.cos(now * 5.1 + signalIndex * 0.6) * (signalIndex < 3 ? 0.35 : 8);
+          const jitter = (Math.random() - 0.5) * (signalIndex < 3 ? 0.5 : 12);
+          const restingGravity = signal.label === "az" ? 9.81 : 0;
           const next = Number(
-            Math.max(
-              -1.6,
-              Math.min(1.6, previous * 0.62 + wave + jitter),
-            ).toFixed(2),
+            (restingGravity + base + detail + micro + jitter).toFixed(3),
           );
 
           return {
@@ -221,7 +226,7 @@ export function SignalsPage({
           };
         }),
       );
-    }, 420);
+    }, sampleIntervalMs);
 
     return () => window.clearInterval(timer);
   }, [isBluetoothConnected]);
@@ -258,13 +263,13 @@ export function SignalsPage({
       scales: {
         x: {
           display: false,
-          min: -1,
-          max: 1,
-          grid: { display: false },
+          grid: { display: true, color: "rgba(148, 163, 184, 0.13)" },
         },
         y: {
           display: false,
-          grid: { display: false },
+          min: -1,
+          max: 1,
+          grid: { display: true, color: "rgba(148, 163, 184, 0.16)" },
         },
       },
     }),
@@ -279,7 +284,7 @@ export function SignalsPage({
             <p className="text-[10px] uppercase leading-none text-moonwalk-silver">
               IMU frame monitor
             </p>
-            <h1 className="mt-1 truncate text-xl font-bold leading-none">
+            <h1 className="mt-1 truncate text-base font-bold leading-none">
               IMU + Pressure Payload
             </h1>
           </div>
@@ -293,7 +298,7 @@ export function SignalsPage({
             <p className="text-[9px] uppercase leading-none text-moonwalk-silver">
               tag
             </p>
-            <p className="mt-1 text-sm font-bold leading-none text-moonwalk-teal">
+            <p className="mt-1 text-[11px] font-bold leading-none text-moonwalk-teal">
               IMU
             </p>
           </div>
@@ -301,15 +306,15 @@ export function SignalsPage({
             <p className="text-[9px] uppercase leading-none text-moonwalk-silver">
               stream
             </p>
-            <p className="mt-1 text-sm font-bold leading-none text-moonwalk-teal">
-              {isBluetoothConnected ? "BLE" : "MOCK"}
+            <p className="mt-1 text-[11px] font-bold leading-none text-moonwalk-teal">
+              {isBluetoothConnected ? "BLE" : "RAW"}
             </p>
           </div>
           <div className="border-r border-moonwalk-white/20 px-1 py-1.5">
             <p className="text-[9px] uppercase leading-none text-moonwalk-silver">
               t ms
             </p>
-            <p className="mt-1 truncate text-sm font-bold leading-none tabular-nums">
+            <p className="mt-1 truncate text-[11px] font-bold leading-none tabular-nums">
               {isBluetoothConnected ? timestampLabel : formatTimestamp(1234 + tick)}
             </p>
           </div>
@@ -317,7 +322,7 @@ export function SignalsPage({
             <p className="text-[9px] uppercase leading-none text-moonwalk-silver">
               pressure
             </p>
-            <p className="mt-1 text-sm font-bold leading-none tabular-nums text-moonwalk-teal">
+            <p className="mt-1 text-[11px] font-bold leading-none tabular-nums text-moonwalk-teal">
               {pressureLabel}
             </p>
           </div>
@@ -329,7 +334,7 @@ export function SignalsPage({
           <div className="grid grid-cols-[auto_auto] items-center gap-1 text-[10px] font-bold leading-none text-moonwalk-teal">
             <Zap className="size-3" aria-hidden="true" />
             <span>
-              {isBluetoothConnected ? `${packetCount}/${badPacketCount}` : "mock"}
+              {isBluetoothConnected ? `${packetCount}/${badPacketCount}` : "50ms"}
             </span>
           </div>
         </div>
@@ -344,7 +349,7 @@ export function SignalsPage({
             value
           </p>
           <p className="px-1.5 py-1 text-[9px] font-bold uppercase leading-none">
-            norm plot
+            raw plot
           </p>
           <p className="border-l border-moonwalk-navy/15 px-1 py-1 text-center text-[9px] font-bold uppercase leading-none dark:border-moonwalk-white/20">
             peak

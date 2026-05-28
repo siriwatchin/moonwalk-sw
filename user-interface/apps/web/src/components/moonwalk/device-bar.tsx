@@ -117,7 +117,7 @@ export function StickyDeviceBar({
             aria-hidden="true"
           />
           <div className="min-w-0">
-            <p className="truncate text-base font-bold leading-none">
+            <p className="truncate text-sm font-bold leading-none">
               {bluetoothCopy.label}
             </p>
             <p className="mt-0.5 truncate text-[11px] leading-none text-moonwalk-silver">
@@ -158,7 +158,7 @@ export function StickyDeviceBar({
           />
         </div>
         <div className="min-w-0">
-          <p className="truncate text-base font-bold leading-none">
+          <p className="truncate text-sm font-bold leading-none">
             {selected.label}
           </p>
           <p className="mt-0.5 truncate text-xs leading-4 text-moonwalk-slate/75 dark:text-moonwalk-white/65">
@@ -196,7 +196,7 @@ export function StickyDeviceBar({
                   />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-lg font-bold leading-none">
+                  <p className="text-base font-bold leading-none">
                     {device.label}
                   </p>
                   <p className="mt-0.5 text-xs leading-4 text-moonwalk-slate/75 dark:text-moonwalk-white/65">
@@ -221,7 +221,7 @@ export function StickyDeviceBar({
               <Plus className="size-6 text-moonwalk-teal" aria-hidden="true" />
             </div>
             <div className="min-w-0">
-              <p className="text-lg font-bold leading-none">
+              <p className="text-base font-bold leading-none">
                 เพิ่มอุปกรณ์ของคุณ
               </p>
               <p className="mt-0.5 text-xs leading-4 text-moonwalk-slate/75 dark:text-moonwalk-white/65">

@@ -70,7 +70,7 @@ export function BiofeedbackPage({
             <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
               Live walking state
             </p>
-            <h1 className="mt-1 text-2xl font-bold leading-none">กำลังเดิน</h1>
+            <h1 className="mt-1 text-xl font-bold leading-none">กำลังเดิน</h1>
           </div>
           <div className="grid size-9 shrink-0 place-items-center border border-moonwalk-teal text-moonwalk-teal">
             <Activity className="size-5" aria-hidden="true" />
@@ -81,7 +81,7 @@ export function BiofeedbackPage({
             <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
               เวลา
             </p>
-            <p className="mt-1 text-xl font-bold leading-none">
+            <p className="mt-1 text-lg font-bold leading-none">
               {formatSessionTime(elapsedSeconds)}
             </p>
           </div>
@@ -89,7 +89,7 @@ export function BiofeedbackPage({
             <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
               อุปกรณ์
             </p>
-            <p className="mt-1 truncate text-xl font-bold leading-none">
+            <p className="mt-1 truncate text-lg font-bold leading-none">
               {deviceLabel}
             </p>
           </div>
@@ -97,7 +97,7 @@ export function BiofeedbackPage({
             <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
               คุณภาพ
             </p>
-            <p className="mt-1 text-xl font-bold leading-none text-moonwalk-teal">
+            <p className="mt-1 text-lg font-bold leading-none text-moonwalk-teal">
               ดี
             </p>
           </div>
@@ -106,8 +106,8 @@ export function BiofeedbackPage({
 
       <GridPanel className="bg-moonwalk-navy p-2 text-moonwalk-white dark:border-moonwalk-white">
         <p className="text-xs text-moonwalk-silver">Biofeedback now</p>
-        <h2 className="mt-1 text-2xl font-bold leading-none">คงจังหวะนี้ไว้</h2>
-        <p className="mt-2 line-clamp-2 text-sm leading-5 text-moonwalk-silver">
+        <h2 className="mt-1 text-xl font-bold leading-none">คงจังหวะนี้ไว้</h2>
+        <p className="mt-2 line-clamp-2 text-xs leading-5 text-moonwalk-silver">
           ระบบเห็นรูปแบบการเดินต่อเนื่องและจังหวะค่อนข้างสม่ำเสมอ
           ไม่ต้องเร่งความเร็ว
         </p>
@@ -126,7 +126,7 @@ export function BiofeedbackPage({
               />
             </div>
             <div className="mt-2 flex items-end gap-1">
-              <p className="truncate text-2xl font-bold leading-none">
+              <p className="truncate text-xl font-bold leading-none">
                 {value}
               </p>
               <p className="pb-0.5 text-xs font-bold text-moonwalk-slate/70 dark:text-moonwalk-white/65">
@@ -139,7 +139,7 @@ export function BiofeedbackPage({
 
       <GridPanel className="p-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold leading-none">Current usage</h2>
+          <h2 className="text-base font-bold leading-none">Current usage</h2>
           <span className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
             live
           </span>
@@ -169,7 +169,7 @@ export function BiofeedbackPage({
             <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
               คำแนะนำถัดไป
             </p>
-            <p className="truncate text-lg font-bold leading-none">
+            <p className="truncate text-base font-bold leading-none">
               เดินต่ออีก 2 นาทีด้วยจังหวะเดิม
             </p>
           </div>

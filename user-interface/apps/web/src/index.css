@@ -12,6 +12,10 @@
   font-family: "LINE Seed Sans TH", Tahoma, sans-serif;
 }
 
+body {
+  font-size: 13px;
+}
+
 @theme inline {
   --color-moonwalk-navy: #0b101f;
   --color-moonwalk-slate: #3A3E41;

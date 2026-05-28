@@ -3,15 +3,17 @@ import {
   BarChart3,
   Brain,
   Home,
+  Settings,
 } from "lucide-react";
 
-export type PageId = "home" | "biofeedback" | "signals";
+export type PageId = "home" | "biofeedback" | "signals" | "settings";
 export type DeviceId = "cane" | "walker";
 
 export const pages = [
   { id: "home", label: "หน้าหลัก", icon: Home },
   { id: "biofeedback", label: "ฟีดแบ็ก", icon: Brain },
   { id: "signals", label: "สัญญาณสด", icon: BarChart3 },
+  { id: "settings", label: "ตั้งค่า", icon: Settings },
 ] satisfies Array<{ id: PageId; label: string; icon: typeof Home }>;
 
 export const devices = [
@@ -66,19 +68,19 @@ export const liveSignals = [
   {
     label: "ax",
     value: "0.18",
-    unit: "g",
+    unit: "m/s²",
     bars: [20, 44, 38, 62, 55, 71, 48, 59, 77, 51, 69, 83],
   },
   {
     label: "ay",
     value: "-0.04",
-    unit: "g",
+    unit: "m/s²",
     bars: [31, 28, 46, 42, 64, 58, 49, 66, 53, 48],
   },
   {
     label: "az",
     value: "0.96",
-    unit: "g",
+    unit: "m/s²",
     bars: [72, 69, 76, 71, 80, 74, 78, 73, 79, 75, 82, 77],
   },
   {

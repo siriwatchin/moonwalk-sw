@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 
 import "../index.css";
-import Header from "@/components/header";
 import Providers from "@/components/providers";
 
 export const metadata: Metadata = {
@@ -18,10 +17,7 @@ export default function RootLayout({
     <html lang="th" suppressHydrationWarning>
       <body className="font-line-seed-th antialiased" suppressHydrationWarning>
         <Providers>
-          <div className="grid grid-rows-[auto_1fr] h-svh">
-            <Header />
-            {children}
-          </div>
+          <div className="h-svh">{children}</div>
         </Providers>
       </body>
     </html>

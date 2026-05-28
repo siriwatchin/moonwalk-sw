@@ -8,6 +8,7 @@ import { BluetoothConnectOverlay } from "@/components/moonwalk/bluetooth-connect
 import { BottomNav } from "@/components/moonwalk/bottom-nav";
 import { StickyDeviceBar } from "@/components/moonwalk/device-bar";
 import { HomePage } from "@/components/moonwalk/home-page";
+import { SettingsPage } from "@/components/moonwalk/settings-page";
 import { SignalsPage } from "@/components/moonwalk/signals-page";
 import { useBluetoothDevice } from "@/hooks/use-bluetooth-device";
 import { useMounted } from "@/hooks/use-mounted";
@@ -42,6 +43,16 @@ export default function MoonWalkApp() {
       );
     }
 
+    if (activePage === "settings") {
+      return (
+        <SettingsPage
+          bluetoothDevice={bluetooth.device}
+          bluetoothState={bluetooth.state}
+          onOpenBluetooth={() => setIsBluetoothOpen(true)}
+        />
+      );
+    }
+
     return (
       <HomePage
         selectedDevice={selectedDevice}
@@ -54,6 +65,7 @@ export default function MoonWalkApp() {
     bluetooth.isConnected,
     bluetooth.latestSample,
     bluetooth.packetCount,
+    bluetooth.state,
     selectedDevice,
   ]);
 
@@ -94,7 +106,7 @@ export default function MoonWalkApp() {
 
         {content}
 
-        <div className="border border-moonwalk-silver bg-moonwalk-white p-2 text-sm text-moonwalk-slate dark:border-moonwalk-white/20 dark:bg-moonwalk-navy dark:text-moonwalk-white/65">
+        <div className="border border-moonwalk-silver bg-moonwalk-white p-2 text-xs text-moonwalk-slate dark:border-moonwalk-white/20 dark:bg-moonwalk-navy dark:text-moonwalk-white/65">
           <span>โมดูลติดตั้งกับ {selectedDeviceLabel}</span>
         </div>
       </div>

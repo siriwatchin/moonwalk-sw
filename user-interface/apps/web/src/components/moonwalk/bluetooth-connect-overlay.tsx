@@ -53,7 +53,7 @@ function DeviceRow({
         />
       </div>
       <div className="min-w-0">
-        <p className="truncate text-base font-bold leading-none">
+        <p className="truncate text-sm font-bold leading-none">
           {device.name}
         </p>
         <p className="mt-1 truncate text-[11px] leading-none text-moonwalk-slate/70 dark:text-moonwalk-white/60">
@@ -101,7 +101,7 @@ export function BluetoothConnectOverlay({
             <p className="text-xs uppercase leading-none text-moonwalk-slate/70 dark:text-moonwalk-white/60">
               Bluetooth setup
             </p>
-            <h1 className="mt-1 truncate text-2xl font-bold leading-none">
+            <h1 className="mt-1 truncate text-xl font-bold leading-none">
               เชื่อมต่ออุปกรณ์
             </h1>
           </div>
@@ -123,7 +123,7 @@ export function BluetoothConnectOverlay({
                   <p className="text-xs text-moonwalk-silver">
                     Recommended device
                   </p>
-                  <h2 className="mt-1 text-xl font-bold leading-none">
+                  <h2 className="mt-1 text-lg font-bold leading-none">
                     {NANO_IMU_DEVICE_NAME}
                   </h2>
                   <p className="mt-2 break-all text-[11px] leading-4 text-moonwalk-silver">
@@ -147,7 +147,7 @@ export function BluetoothConnectOverlay({
             <section className="border border-moonwalk-silver dark:border-moonwalk-white/20">
               <div className="grid grid-cols-[1fr_auto] items-center border-b border-moonwalk-silver p-2 dark:border-moonwalk-white/20">
                 <div>
-                  <h2 className="text-lg font-bold leading-none">
+                  <h2 className="text-base font-bold leading-none">
                     อุปกรณ์ที่เคยอนุญาต
                   </h2>
                   <p className="mt-1 text-xs leading-none text-moonwalk-slate/70 dark:text-moonwalk-white/60">
@@ -172,20 +172,20 @@ export function BluetoothConnectOverlay({
                   />
                 ))
               ) : (
-                <div className="p-3 text-sm text-moonwalk-slate/75 dark:text-moonwalk-white/65">
+                <div className="p-3 text-xs text-moonwalk-slate/75 dark:text-moonwalk-white/65">
                   ยังไม่มีอุปกรณ์ที่อนุญาตไว้ กดค้นหาเพื่อเปิดหน้าต่างของเบราว์เซอร์
                 </div>
               )}
             </section>
 
             {error ? (
-              <div className="border border-moonwalk-teal bg-moonwalk-teal/10 p-2 text-sm font-bold leading-5">
+              <div className="border border-moonwalk-teal bg-moonwalk-teal/10 p-2 text-xs font-bold leading-5">
                 {error}
               </div>
             ) : null}
 
             {isUnsupported ? (
-              <div className="border border-moonwalk-silver p-2 text-sm leading-5 dark:border-moonwalk-white/20">
+              <div className="border border-moonwalk-silver p-2 text-xs leading-5 dark:border-moonwalk-white/20">
                 Web Bluetooth ต้องใช้ Chrome/Edge บน localhost หรือ HTTPS
               </div>
             ) : null}
@@ -196,7 +196,7 @@ export function BluetoothConnectOverlay({
           {isConnected ? (
             <button
               type="button"
-              className="min-h-12 border border-moonwalk-navy text-lg font-bold dark:border-moonwalk-white"
+              className="min-h-12 border border-moonwalk-navy text-base font-bold dark:border-moonwalk-white"
               onClick={onDisconnect}
             >
               ตัดการเชื่อมต่อ
@@ -205,7 +205,7 @@ export function BluetoothConnectOverlay({
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              className="grid min-h-12 grid-cols-[auto_auto] place-content-center items-center gap-2 border border-moonwalk-teal bg-moonwalk-teal text-base font-bold text-moonwalk-navy disabled:opacity-50"
+              className="grid min-h-12 grid-cols-[auto_auto] place-content-center items-center gap-2 border border-moonwalk-teal bg-moonwalk-teal text-sm font-bold text-moonwalk-navy disabled:opacity-50"
               onClick={() => onConnect("supported")}
               disabled={isPending || isUnsupported}
             >
@@ -218,7 +218,7 @@ export function BluetoothConnectOverlay({
             </button>
             <button
               type="button"
-              className="grid min-h-12 grid-cols-[auto_auto] place-content-center items-center gap-2 border border-moonwalk-navy text-base font-bold disabled:opacity-50 dark:border-moonwalk-white"
+              className="grid min-h-12 grid-cols-[auto_auto] place-content-center items-center gap-2 border border-moonwalk-navy text-sm font-bold disabled:opacity-50 dark:border-moonwalk-white"
               onClick={() => onConnect("all")}
               disabled={isPending || isUnsupported}
             >

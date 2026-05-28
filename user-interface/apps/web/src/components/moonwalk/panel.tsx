@@ -46,7 +46,7 @@ export function MiniStatus({
           )}
           aria-hidden="true"
         />
-        <p className="min-w-0 text-lg font-bold leading-none">{value}</p>
+        <p className="min-w-0 text-base font-bold leading-none">{value}</p>
       </div>
     </div>
   );
