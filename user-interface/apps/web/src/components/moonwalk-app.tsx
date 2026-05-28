@@ -12,7 +12,10 @@ import { SettingsPage } from "@/components/moonwalk/settings-page";
 import { SignalsPage } from "@/components/moonwalk/signals-page";
 import { useBluetoothDevice } from "@/hooks/use-bluetooth-device";
 import { useMounted } from "@/hooks/use-mounted";
-import { calculateBiofeedbackMetrics } from "@/lib/biofeedback-metrics";
+import {
+  calculateBiofeedbackMetrics,
+  type BiofeedbackBaseline,
+} from "@/lib/biofeedback-metrics";
 import type { NanoImuSample } from "@/lib/nano-imu";
 import { devices, type DeviceId, type PageId } from "@/components/moonwalk-data";
 
@@ -29,9 +32,21 @@ export default function MoonWalkApp() {
   const selectedDeviceLabel = devices.find(
     (device) => device.id === selectedDevice,
   )?.label;
+  const baseline = useMemo<BiofeedbackBaseline>(
+    () => ({
+      activationMad: 0.55,
+      activationMedian: 0.85,
+      cadenceMedian: 82,
+      dutyFactorMedian: 43,
+      baselinePressureDeltaPa: 7_730,
+      rhythmMedian: 86,
+      sessionCount: 7,
+    }),
+    [],
+  );
   const biofeedbackMetrics = useMemo(
-    () => calculateBiofeedbackMetrics(sampleHistory),
-    [sampleHistory],
+    () => calculateBiofeedbackMetrics(sampleHistory, { baseline }),
+    [baseline, sampleHistory],
   );
 
   useEffect(() => {
@@ -56,6 +71,7 @@ export default function MoonWalkApp() {
     if (activePage === "biofeedback") {
       return (
         <BiofeedbackPage
+          isBluetoothConnected={bluetooth.isConnected}
           metrics={biofeedbackMetrics}
           selectedDevice={selectedDevice}
         />
@@ -87,6 +103,7 @@ export default function MoonWalkApp() {
       <HomePage
         selectedDevice={selectedDevice}
         isBluetoothConnected={bluetooth.isConnected}
+        metrics={biofeedbackMetrics}
       />
     );
   }, [
@@ -102,7 +119,7 @@ export default function MoonWalkApp() {
 
   if (!isMounted) {
     return (
-      <main className="min-h-0 overflow-y-auto bg-moonwalk-white text-moonwalk-navy dark:bg-moonwalk-navy dark:text-moonwalk-white">
+      <main className="h-full overflow-y-auto bg-moonwalk-white text-moonwalk-navy dark:bg-moonwalk-navy dark:text-moonwalk-white">
         <div className="font-line-seed-th mx-auto grid min-h-full w-full max-w-6xl gap-2 px-3 pb-20 pt-0 md:px-5 md:pt-3">
           <section className="sticky top-0 z-10 -mx-3 border-y border-moonwalk-navy bg-moonwalk-white text-moonwalk-navy dark:border-moonwalk-white dark:bg-moonwalk-navy dark:text-moonwalk-white md:mx-0 md:border-x">
             <div className="h-12 border-b border-moonwalk-white bg-moonwalk-navy" />
@@ -116,7 +133,7 @@ export default function MoonWalkApp() {
   }
 
   return (
-    <main className="min-h-0 overflow-y-auto bg-moonwalk-white text-moonwalk-navy dark:bg-moonwalk-navy dark:text-moonwalk-white">
+    <main className="h-full overflow-y-auto bg-moonwalk-white text-moonwalk-navy dark:bg-moonwalk-navy dark:text-moonwalk-white">
       <div className="font-line-seed-th mx-auto grid min-h-full w-full max-w-6xl gap-2 px-3 pb-20 pt-0 md:px-5 md:pt-3">
         <StickyDeviceBar
           selectedDevice={selectedDevice}

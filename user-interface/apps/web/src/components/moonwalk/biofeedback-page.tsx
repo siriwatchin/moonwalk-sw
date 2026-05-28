@@ -5,6 +5,8 @@ import {
   Brain,
   ChevronRight,
   Footprints,
+  Gauge,
+  ShieldCheck,
   Waves,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -18,9 +20,11 @@ import { formatSessionTime } from "@/lib/format";
 export function BiofeedbackPage({
   metrics,
   selectedDevice,
+  isBluetoothConnected,
 }: {
   metrics: BiofeedbackMetrics;
   selectedDevice: DeviceId;
+  isBluetoothConnected: boolean;
 }) {
   const deviceLabel =
     devices.find((device) => device.id === selectedDevice)?.label ?? "ไม้เท้า";
@@ -34,52 +38,93 @@ export function BiofeedbackPage({
     return () => window.clearInterval(timer);
   }, []);
 
-  const liveCadence = 82 + (elapsedSeconds % 5) - 2;
-  const liveRhythm = 86 + (elapsedSeconds % 3);
-  const liveDuty = 41 + (elapsedSeconds % 4);
-  const cadenceValue = metrics.cadenceSpm
-    ? Math.round(metrics.cadenceSpm)
-    : liveCadence;
-  const rhythmValue = metrics.rhythmScore
-    ? Math.round(metrics.rhythmScore)
-    : liveRhythm;
-  const dutyValue = metrics.dutyFactorPercent
-    ? Math.round(metrics.dutyFactorPercent)
-    : liveDuty;
+  const liveCadence = isBluetoothConnected ? null : 82 + (elapsedSeconds % 5) - 2;
+  const liveRhythm = isBluetoothConnected ? null : 86 + (elapsedSeconds % 3);
+  const liveDuty = isBluetoothConnected ? null : 41 + (elapsedSeconds % 4);
+  const cadenceValue =
+    metrics.cadenceSpm === null
+      ? liveCadence === null
+        ? "--"
+        : String(liveCadence)
+      : String(Math.round(metrics.cadenceSpm));
+  const rhythmValue =
+    metrics.rhythmScore === null
+      ? liveRhythm === null
+        ? "--"
+        : String(liveRhythm)
+      : String(Math.round(metrics.rhythmScore));
+  const dutyValue =
+    metrics.dutyFactorPercent === null
+      ? liveDuty === null
+        ? "--"
+        : String(liveDuty)
+      : String(Math.round(metrics.dutyFactorPercent));
+  const readinessValue =
+    metrics.gaitReadiness === null ? "--" : String(Math.round(metrics.gaitReadiness));
+  const activationValue = metrics.activationScore.toFixed(1);
+  const strainValue = metrics.mobilityStrain.toFixed(1);
+  const loadValue = Math.round(metrics.loadControlPercent);
   const confidenceValue = Math.round(metrics.confidence * 100);
-  const dataQualityValue = metrics.sampleCount > 0 ? confidenceValue : 94;
+  const dataQualityValue =
+    metrics.sampleCount > 0 ? confidenceValue : isBluetoothConnected ? 0 : 94;
   const qualityLabel =
-    metrics.sampleCount === 0 ? "ดี" : confidenceValue >= 70 ? "ดี" : "กำลังอ่าน";
-  const recommendation =
-    metrics.action === "ลงน้ำหนักมาก"
-      ? "ลดแรงกดที่ด้ามจับเล็กน้อย"
-      : metrics.action === "จังหวะไม่สม่ำเสมอ"
-        ? "ชะลอและรักษาจังหวะให้เท่ากัน"
-        : "เดินต่ออีก 2 นาทีด้วยจังหวะเดิม";
+    metrics.sampleCount === 0
+      ? isBluetoothConnected
+        ? "รอสัญญาณ"
+        : "ดี"
+      : confidenceValue >= 70
+        ? "ดี"
+        : "กำลังอ่าน";
   const timeProgress = Math.min(96, Math.round((elapsedSeconds / 720) * 100));
+  const coachCards = [
+    {
+      label: "Readiness",
+      value: readinessValue,
+      unit: metrics.readinessLabel,
+      icon: ShieldCheck,
+    },
+    {
+      label: "Activation",
+      value: activationValue,
+      unit: metrics.activationLabel,
+      icon: Gauge,
+    },
+    {
+      label: "Load",
+      value: String(loadValue),
+      unit: metrics.loadControlLabel,
+      icon: Activity,
+    },
+    {
+      label: "Strain",
+      value: strainValue,
+      unit: "/21",
+      icon: Brain,
+    },
+  ];
   const liveFeedbackCards = [
     {
       label: "Cadence",
-      value: String(cadenceValue),
+      value: cadenceValue,
       unit: "รอบ/นาที",
       icon: Footprints,
     },
     {
       label: "Rhythm",
-      value: String(rhythmValue),
+      value: rhythmValue,
       unit: "/100",
       icon: Waves,
     },
     {
       label: "Duty factor",
-      value: String(dutyValue),
+      value: dutyValue,
       unit: "%",
       icon: Activity,
     },
     {
       label: "Action",
       value: metrics.action,
-      unit: `${dataQualityValue}%`,
+      unit: metrics.fatigueLabel,
       icon: Brain,
     },
   ];
@@ -92,7 +137,9 @@ export function BiofeedbackPage({
             <p className="text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
               Live walking state
             </p>
-            <h1 className="mt-1 text-xl font-bold leading-none">กำลังเดิน</h1>
+            <h1 className="mt-1 text-xl font-bold leading-none">
+              {metrics.activationLabel}
+            </h1>
           </div>
           <div className="grid size-9 shrink-0 place-items-center border border-moonwalk-teal text-moonwalk-teal">
             <Activity className="size-5" aria-hidden="true" />
@@ -129,14 +176,35 @@ export function BiofeedbackPage({
       <GridPanel className="bg-moonwalk-navy p-2 text-moonwalk-white dark:border-moonwalk-white">
         <p className="text-xs text-moonwalk-silver">Biofeedback now</p>
         <h2 className="mt-1 text-xl font-bold leading-none">
-          {metrics.action === "เริ่มเก็บข้อมูล" ? "กำลังอ่านสัญญาณ" : "คงจังหวะนี้ไว้"}
+          {metrics.recommendation}
         </h2>
         <p className="mt-2 line-clamp-2 text-xs leading-5 text-moonwalk-silver">
           {metrics.sampleCount > 0
-            ? `อ่าน ${metrics.sampleCount} ตัวอย่าง แกนสวิง ${metrics.swingAxis.toUpperCase()} โหลด ${Math.round(metrics.loadPercent)}%`
-            : "ระบบเห็นรูปแบบการเดินต่อเนื่องและจังหวะค่อนข้างสม่ำเสมอ ไม่ต้องเร่งความเร็ว"}
+            ? `อ่าน ${metrics.sampleCount} ตัวอย่าง / readiness ${readinessValue} / strain ${strainValue}`
+            : isBluetoothConnected
+              ? "เชื่อมต่อแล้ว กำลังรอ frame IMU จากอุปกรณ์"
+              : "โหมดสาธิตจะแสดงค่าจำลองจนกว่าจะเชื่อมต่อ Bluetooth"}
         </p>
       </GridPanel>
+
+      <div className="grid grid-cols-2 gap-2">
+        {coachCards.map(({ label, value, unit, icon: Icon }) => (
+          <GridPanel key={label} className="p-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="truncate text-xs text-moonwalk-slate/70 dark:text-moonwalk-white/65">
+                {label}
+              </p>
+              <Icon className="size-4 shrink-0 text-moonwalk-teal" aria-hidden="true" />
+            </div>
+            <div className="mt-2 grid grid-cols-[auto_1fr] items-end gap-1">
+              <p className="text-xl font-bold leading-none">{value}</p>
+              <p className="truncate pb-0.5 text-[10px] font-bold text-moonwalk-slate/70 dark:text-moonwalk-white/65">
+                {unit}
+              </p>
+            </div>
+          </GridPanel>
+        ))}
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         {liveFeedbackCards.map(({ label, value, unit, icon: Icon }) => (
@@ -177,13 +245,22 @@ export function BiofeedbackPage({
           />
           <UsageMeter
             label="ความสม่ำเสมอของจังหวะ"
-            value={rhythmValue}
-            helper="คะแนนนี้เทียบกับ baseline ส่วนตัว"
+            value={metrics.rhythmScore === null ? 0 : Math.round(metrics.rhythmScore)}
+            helper={
+              metrics.rhythmScore === null
+                ? "ต้องตรวจพบ plant อย่างน้อย 4 รอบ"
+                : "คะแนนนี้เทียบกับ baseline ส่วนตัว"
+            }
           />
           <UsageMeter
-            label="ความพร้อมของข้อมูล"
+            label="ควบคุมน้ำหนัก"
+            value={loadValue}
+            helper={metrics.loadControlLabel}
+          />
+          <UsageMeter
+            label="ความพร้อมข้อมูล"
             value={dataQualityValue}
-            helper="Bluetooth และ sample rate อยู่ในช่วงดี"
+            helper={`${metrics.sampleCount} samples / axis ${metrics.swingAxis.toUpperCase()}`}
           />
         </div>
       </GridPanel>
@@ -195,7 +272,7 @@ export function BiofeedbackPage({
               คำแนะนำถัดไป
             </p>
             <p className="truncate text-base font-bold leading-none">
-              {recommendation}
+              {metrics.recommendation}
             </p>
           </div>
           <ChevronRight
