@@ -92,6 +92,7 @@ export function BluetoothConnectOverlay({
 }) {
   const isConnected = state === "connected";
   const isUnsupported = state === "unsupported";
+  const isIosUnsupported = state === "ios-unsupported";
 
   return (
     <div className="font-line-seed-th fixed inset-0 z-40 bg-moonwalk-white text-moonwalk-navy dark:bg-moonwalk-navy dark:text-moonwalk-white">
@@ -184,6 +185,38 @@ export function BluetoothConnectOverlay({
               </div>
             ) : null}
 
+            {isIosUnsupported ? (
+              <section className="border border-moonwalk-navy p-2 dark:border-moonwalk-white">
+                <h2 className="text-base font-bold leading-none">
+                  วิธีใช้บน iPhone / iPad
+                </h2>
+                <div className="mt-2 grid gap-2 text-xs leading-5 text-moonwalk-slate/80 dark:text-moonwalk-white/70">
+                  <p>
+                    Safari บน iOS ยังไม่เปิด Web Bluetooth ให้เว็บไซต์เชื่อมต่อ BLE โดยตรง
+                    จึงค้นหา NanoIMU จาก Safari ไม่ได้
+                  </p>
+                  <div className="border border-moonwalk-silver p-2 dark:border-moonwalk-white/20">
+                    <p className="font-bold text-moonwalk-navy dark:text-moonwalk-white">
+                      ตัวเลือกที่ใช้ได้ตอนนี้
+                    </p>
+                    <p className="mt-1">
+                      เปิดเว็บนี้ผ่านแอปเบราว์เซอร์ iOS ที่มี Web Bluetooth bridge เช่น
+                      WebBLE หรือ Bluefy แล้วกดค้นหา NanoIMU จากในแอปนั้น
+                    </p>
+                  </div>
+                  <div className="border border-moonwalk-silver p-2 dark:border-moonwalk-white/20">
+                    <p className="font-bold text-moonwalk-navy dark:text-moonwalk-white">
+                      ทางเลือกที่เสถียรกว่า
+                    </p>
+                    <p className="mt-1">
+                      ทำแอป iOS native ด้วย CoreBluetooth แล้วส่งข้อมูลเข้าเว็บผ่าน API
+                      หรือเปิดหน้าจอ Moon Walk ในแอปโดยตรง
+                    </p>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             {isUnsupported ? (
               <div className="border border-moonwalk-silver p-2 text-xs leading-5 dark:border-moonwalk-white/20">
                 Web Bluetooth ต้องใช้ Chrome/Edge บน localhost หรือ HTTPS
@@ -207,7 +240,7 @@ export function BluetoothConnectOverlay({
               type="button"
               className="grid min-h-12 grid-cols-[auto_auto] place-content-center items-center gap-2 border border-moonwalk-teal bg-moonwalk-teal text-sm font-bold text-moonwalk-navy disabled:opacity-50"
               onClick={() => onConnect("supported")}
-              disabled={isPending || isUnsupported}
+              disabled={isPending || isUnsupported || isIosUnsupported}
             >
               {isPending ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -220,7 +253,7 @@ export function BluetoothConnectOverlay({
               type="button"
               className="grid min-h-12 grid-cols-[auto_auto] place-content-center items-center gap-2 border border-moonwalk-navy text-sm font-bold disabled:opacity-50 dark:border-moonwalk-white"
               onClick={() => onConnect("all")}
-              disabled={isPending || isUnsupported}
+              disabled={isPending || isUnsupported || isIosUnsupported}
             >
               <Bluetooth className="size-4" aria-hidden="true" />
               <span>ทั้งหมด</span>

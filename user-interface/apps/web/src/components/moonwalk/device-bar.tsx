@@ -16,6 +16,7 @@ import type {
   BluetoothDeviceSnapshot,
 } from "@/hooks/use-bluetooth-device";
 import { cn } from "@user-interface/ui/lib/utils";
+import type { ReactNode } from "react";
 
 function getBluetoothCopy(
   state: BluetoothConnectionState,
@@ -45,6 +46,15 @@ function getBluetoothCopy(
       detail: device?.name ?? "กำลังเปิด GATT connection",
       action: "กำลังเชื่อมต่อ",
       live: "PAIR",
+    };
+  }
+
+  if (state === "ios-unsupported") {
+    return {
+      label: "บลูทูธบน iOS ต้องใช้แอปช่วย",
+      detail: "Safari บน iPhone/iPad ไม่รองรับ Web Bluetooth โดยตรง",
+      action: "ดูวิธีใช้",
+      live: "iOS",
     };
   }
 
@@ -86,6 +96,7 @@ export function StickyDeviceBar({
   isBluetoothPending,
   onBluetoothConnect,
   onBluetoothDisconnect,
+  stickyBelow,
 }: {
   selectedDevice: DeviceId;
   onDeviceChange: (device: DeviceId) => void;
@@ -98,15 +109,16 @@ export function StickyDeviceBar({
   isBluetoothPending: boolean;
   onBluetoothConnect: () => void;
   onBluetoothDisconnect: () => void;
+  stickyBelow?: ReactNode;
 }) {
   const selected =
     devices.find((device) => device.id === selectedDevice) ?? devices[0];
   const bluetoothCopy = getBluetoothCopy(bluetoothState, bluetoothDevice);
   const isBluetoothConnected = bluetoothState === "connected";
-  const canUseBluetooth = bluetoothState !== "unsupported";
+  const canOpenBluetooth = bluetoothState !== "unsupported";
 
   return (
-    <section className="sticky top-0 z-10 -mx-3 border-y border-moonwalk-navy bg-moonwalk-white text-moonwalk-navy dark:border-moonwalk-white dark:bg-moonwalk-navy dark:text-moonwalk-white md:mx-0 md:border-x">
+    <section className="sticky top-0 z-30 -mx-3 border-y border-moonwalk-navy bg-moonwalk-white text-moonwalk-navy shadow-[0_1px_0_rgba(11,16,31,0.18)] dark:border-moonwalk-white dark:bg-moonwalk-navy dark:text-moonwalk-white md:mx-0 md:border-x">
       <div className="grid grid-cols-[1fr_auto] items-center gap-2 border-b border-moonwalk-white bg-moonwalk-navy px-3 py-1.5 text-moonwalk-white">
         <div className="flex min-w-0 items-center gap-2">
           <Bluetooth
@@ -131,7 +143,7 @@ export function StickyDeviceBar({
           onClick={
             isBluetoothConnected ? onBluetoothDisconnect : onBluetoothConnect
           }
-          disabled={!canUseBluetooth || isBluetoothPending}
+          disabled={!canOpenBluetooth || isBluetoothPending}
         >
           {isBluetoothPending ? (
             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
@@ -233,6 +245,12 @@ export function StickyDeviceBar({
               aria-hidden="true"
             />
           </button>
+        </div>
+      ) : null}
+
+      {stickyBelow ? (
+        <div className="border-t border-moonwalk-navy bg-moonwalk-white dark:border-moonwalk-white/25 dark:bg-moonwalk-navy">
+          {stickyBelow}
         </div>
       ) : null}
     </section>

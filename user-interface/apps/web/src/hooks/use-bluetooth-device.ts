@@ -12,6 +12,7 @@ import {
 } from "@/lib/nano-imu";
 
 export type BluetoothConnectionState =
+  | "ios-unsupported"
   | "unsupported"
   | "idle"
   | "searching"
@@ -32,6 +33,19 @@ const optionalServices: BluetoothServiceUUID[] = [
   "battery_service",
   "device_information",
 ];
+
+function isIosWebBluetoothHost() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const userAgent = navigator.userAgent;
+  const platform = navigator.platform;
+  const isTouchMac =
+    platform === "MacIntel" && "maxTouchPoints" in navigator && navigator.maxTouchPoints > 1;
+
+  return /iPad|iPhone|iPod/.test(userAgent) || isTouchMac;
+}
 
 function toDeviceSnapshot(device: BluetoothDevice): BluetoothDeviceSnapshot {
   return {
@@ -98,7 +112,7 @@ export function useBluetoothDevice() {
 
   useEffect(() => {
     if (!navigator.bluetooth) {
-      setState("unsupported");
+      setState(isIosWebBluetoothHost() ? "ios-unsupported" : "unsupported");
       return;
     }
 
@@ -197,8 +211,14 @@ export function useBluetoothDevice() {
 
   const connect = useCallback(async (mode: BluetoothConnectMode = "supported") => {
     if (!navigator.bluetooth) {
-      setState("unsupported");
-      setError("เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth");
+      const isIos = isIosWebBluetoothHost();
+
+      setState(isIos ? "ios-unsupported" : "unsupported");
+      setError(
+        isIos
+          ? "iOS Safari ไม่รองรับ Web Bluetooth โดยตรง กรุณาใช้ WebBLE/Bluefy หรือแอป iOS สำหรับเชื่อมต่อ NanoIMU"
+          : "เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth",
+      );
       return;
     }
 
